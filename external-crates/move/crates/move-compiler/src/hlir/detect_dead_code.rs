@@ -4,7 +4,7 @@
 use crate::{
     diag,
     expansion::ast::ModuleIdent,
-    naming::ast::{self as N, Var},
+    naming::ast::{self as N, BlockLabel},
     parser::ast::BinOp_,
     shared::{unique_map::UniqueMap, *},
     typing::ast as T,
@@ -65,7 +65,7 @@ enum ControlFlow_ {
     AbortCalled,
     Divergent,
     InfiniteLoop,
-    NamedBlockControlCalled(Var), // tracks the loop
+    NamedBlockControlCalled(BlockLabel), // tracks the name
     ReturnCalled,
     UnreachableCode,
 }
@@ -167,7 +167,7 @@ const INFO_MSG: &str =
     "A trailing ';' in an expression block implicitly adds a '()' value after the semicolon. \
      That '()' value will not be reachable";
 
-fn exits_named_block(name: Var, cf: Option<ControlFlow>) -> bool {
+fn exits_named_block(name: BlockLabel, cf: Option<ControlFlow>) -> bool {
     match cf {
         Some(sp!(_, ControlFlow_::NamedBlockControlCalled(break_name))) => name == break_name,
         _ => false,
@@ -191,7 +191,7 @@ fn infinite_loop(loc: Loc) -> Option<ControlFlow> {
     Some(sp(loc, ControlFlow_::InfiniteLoop))
 }
 
-fn named_control_called(loop_name: Var, loc: Loc) -> Option<ControlFlow> {
+fn named_control_called(loop_name: BlockLabel, loc: Loc) -> Option<ControlFlow> {
     Some(sp(loc, ControlFlow_::NamedBlockControlCalled(loop_name)))
 }
 
@@ -341,6 +341,16 @@ fn tail(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
         }
         // Whiles and loops Loops are currently moved to statement position
         E::While(_, _, _) | E::Loop { .. } => statement(context, e),
+        E::NamedBlock(name, seq) => {
+            // a named block in tail position checks for bad semicolons plus if the body exits that
+            // block; if so, at least some of that code is live.
+            let body_result = tail_block(context, seq);
+            if exits_named_block(*name, body_result) {
+                None
+            } else {
+                body_result
+            }
+        }
         E::Block(seq) => tail_block(context, seq),
 
         // -----------------------------------------------------------------------------------------
@@ -418,6 +428,16 @@ fn value(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
             None
         }
         E::While(..) | E::Loop { .. } => statement(context, e),
+        E::NamedBlock(name, seq) => {
+            // a named block in value position checks if the body exits that block; if so, at least
+            // some of that code is live.
+            let body_result = value_block(context, seq);
+            if exits_named_block(*name, body_result) {
+                None
+            } else {
+                body_result
+            }
+        }
         E::Block(seq) => value_block(context, seq),
 
         // -----------------------------------------------------------------------------------------
@@ -531,7 +551,7 @@ fn statement(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
             }
         }
 
-        E::While(_, test, body) => {
+        E::While(test, _, body) => {
             if let Some(test_control_flow) = value(context, test) {
                 context.report_value_error(test_control_flow);
                 already_reported(*eloc)
@@ -557,6 +577,7 @@ fn statement(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
                 body_result
             }
         }
+        E::NamedBlock(_, seq) => statement_block(context, seq, true, false),
         E::Block(seq) => statement_block(context, seq, true, false),
         E::Return(rhs) => {
             if let Some(rhs_control_flow) = value(context, rhs) {

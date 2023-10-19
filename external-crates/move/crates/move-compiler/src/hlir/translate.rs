@@ -47,6 +47,20 @@ fn translate_var(sp!(loc, v_): N::Var) -> H::Var {
     H::Var(sp(loc, s))
 }
 
+fn translate_loop_label(N::BlockLabel(sp!(loc, v_)): N::BlockLabel) -> H::BlockLabel {
+    let N::Var_ {
+        name,
+        id: depth,
+        color,
+    } = v_;
+    let s = format!(
+        "{}{}{}{}{}",
+        name, NEW_NAME_DELIM, depth, NEW_NAME_DELIM, color
+    )
+    .into();
+    H::BlockLabel(sp(loc, s))
+}
+
 const TEMP_PREFIX: &str = "%";
 static TEMP_PREFIX_SYMBOL: Lazy<Symbol> = Lazy::new(|| TEMP_PREFIX.into());
 
@@ -94,8 +108,8 @@ struct Context<'env> {
     function_locals: UniqueMap<H::Var, H::SingleType>,
     signature: Option<H::FunctionSignature>,
     tmp_counter: usize,
-    named_block_binders: UniqueMap<H::Var, Vec<H::LValue>>,
-    named_block_types: UniqueMap<H::Var, H::Type>,
+    named_block_binders: UniqueMap<H::BlockLabel, Vec<H::LValue>>,
+    named_block_types: UniqueMap<H::BlockLabel, H::Type>,
     /// collects all struct fields used in the current module
     pub used_fields: BTreeMap<Symbol, BTreeSet<Symbol>>,
 }
@@ -170,26 +184,30 @@ impl<'env> Context<'env> {
         self.function_locals.add(symbol, t).unwrap();
     }
 
-    pub fn record_named_block_binders(&mut self, block_name: H::Var, binders: Vec<H::LValue>) {
+    pub fn record_named_block_binders(
+        &mut self,
+        block_name: H::BlockLabel,
+        binders: Vec<H::LValue>,
+    ) {
         self.named_block_binders
             .add(block_name, binders)
             .expect("ICE reused block name");
     }
 
-    pub fn record_named_block_type(&mut self, block_name: H::Var, ty: H::Type) {
+    pub fn record_named_block_type(&mut self, block_name: H::BlockLabel, ty: H::Type) {
         self.named_block_types
             .add(block_name, ty)
             .expect("ICE reused named block name");
     }
 
-    pub fn lookup_named_block_binders(&mut self, block_name: &H::Var) -> Vec<H::LValue> {
+    pub fn lookup_named_block_binders(&mut self, block_name: &H::BlockLabel) -> Vec<H::LValue> {
         self.named_block_binders
             .get(block_name)
             .expect("ICE named block with no binders")
             .clone()
     }
 
-    pub fn lookup_named_block_type(&mut self, block_name: &H::Var) -> Option<H::Type> {
+    pub fn lookup_named_block_type(&mut self, block_name: &H::BlockLabel) -> Option<H::Type> {
         self.named_block_types.get(block_name).cloned()
     }
 
@@ -740,7 +758,7 @@ fn tail(
             has_break: true,
             body,
         } => {
-            let name = translate_var(name);
+            let name = translate_loop_label(name);
             let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
             let result = if binders.is_empty() {
                 // need to swap the implicit unit out for a trailing unit in tail position
@@ -770,6 +788,30 @@ fn tail(
             // find a break we won't need binders anyway. We just treat it like a statement.
             statement(context, block, T::exp(in_type.clone(), sp(eloc, e_)));
             None
+        }
+        E::NamedBlock(name, seq) => {
+            let name = translate_loop_label(name);
+            let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
+            let result = if binders.is_empty() {
+                // need to swap the implicit unit out for a trailing unit in tail position
+                trailing_unit_exp(eloc)
+            } else {
+                bound_exp
+            };
+            context.record_named_block_binders(name, binders.clone());
+            context.record_named_block_type(name, out_type.clone());
+            let mut body_block = make_block!();
+            let final_exp = tail_block(context, &mut body_block, Some(&out_type), seq);
+            let _bound_final =
+                bind_value_in_block(context, binders, Some(out_type), &mut body_block, final_exp);
+            block.push_back(sp(
+                eloc,
+                S::NamedBlock {
+                    name,
+                    block: body_block,
+                },
+            ));
+            Some(result)
         }
         E::Block(seq) => tail_block(context, block, Some(&out_type), seq),
 
@@ -960,7 +1002,7 @@ fn value(
             has_break: true,
             body,
         } => {
-            let name = translate_var(name);
+            let name = translate_loop_label(name);
             let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
             context.record_named_block_binders(name, binders);
             context.record_named_block_type(name, out_type.clone());
@@ -982,6 +1024,24 @@ fn value(
         e_ @ E::Loop { .. } => {
             statement(context, block, T::exp(in_type.clone(), sp(eloc, e_)));
             make_exp(HE::Unreachable)
+        }
+        E::NamedBlock(name, seq) => {
+            let name = translate_loop_label(name);
+            let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
+            context.record_named_block_binders(name, binders.clone());
+            context.record_named_block_type(name, out_type.clone());
+            let mut body_block = make_block!();
+            let final_exp = value_block(context, &mut body_block, Some(&out_type), seq);
+            let _bound_final =
+                bind_value_in_block(context, binders, Some(out_type), &mut body_block, final_exp);
+            block.push_back(sp(
+                eloc,
+                S::NamedBlock {
+                    name,
+                    block: body_block,
+                },
+            ));
+            Some(bound_exp)
         }
         E::Block(seq) => value_block(context, block, Some(&out_type), seq),
 
@@ -1403,7 +1463,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
                 },
             ));
         }
-        E::While(name, test, body) => {
+        E::While(test, name, body) => {
             let mut cond_block = make_block!();
             let cond_exp = value(context, &mut cond_block, Some(&tbool(eloc)), *test);
             let cond = (cond_block, Box::new(cond_exp));
@@ -1423,7 +1483,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
             ));
         }
         E::Loop { name, body, .. } => {
-            let name = translate_var(name);
+            let name = translate_loop_label(name);
             let out_type = type_(context, ty.clone());
             let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
             context.record_named_block_binders(name, binders);
@@ -1456,7 +1516,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
             block.push_back(make_command(eloc, C::Abort(exp)));
         }
         E::Give(name, rhs) => {
-            let out_name = translate_var(name);
+            let out_name = translate_loop_label(name);
             let bind_ty = context.lookup_named_block_type(&out_name);
             let rhs = value(context, block, bind_ty.as_ref(), *rhs);
             let binders = context.lookup_named_block_binders(&out_name);
@@ -1468,7 +1528,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
             block.push_back(make_command(eloc, C::Break(out_name)));
         }
         E::Continue(name) => {
-            let out_name = translate_var(name);
+            let out_name = translate_loop_label(name);
             block.push_back(make_command(eloc, C::Continue(out_name)));
         }
 
@@ -1517,7 +1577,8 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
         | E::Move { .. }
         | E::Copy { .. }
         | E::Spec(..)
-        | E::UnresolvedError) => value_statement(context, block, make_exp(e_)),
+        | E::UnresolvedError
+        | E::NamedBlock(_, _)) => value_statement(context, block, make_exp(e_)),
 
         E::Value(_) | E::Unit { .. } => (),
 

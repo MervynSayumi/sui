@@ -11,7 +11,7 @@ use crate::{
     diag,
     diagnostics::Diagnostics,
     expansion::ast::{AbilitySet, ModuleIdent},
-    hlir::ast::{self as H, Label, Value, Value_, Var},
+    hlir::ast::{self as H, BlockLabel, Label, Value, Value_, Var},
     parser::ast::{ConstantName, FunctionName, StructName},
     shared::{ast_debug::AstDebug, unique_map::UniqueMap, CompilationEnv},
     FullyCompiledProgram,
@@ -32,11 +32,17 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const DEBUG_PRINT: bool = false;
 
+enum NamedBlockType {
+    Loop,
+    While,
+    Named,
+}
+
 struct Context<'env> {
     env: &'env mut CompilationEnv,
     struct_declared_abilities: UniqueMap<ModuleIdent, UniqueMap<StructName, AbilitySet>>,
     label_count: usize,
-    named_blocks: UniqueMap<Var, (Label, Label)>,
+    named_blocks: UniqueMap<BlockLabel, (Label, Label)>,
     // Used for populating block_info
     loop_bounds: BTreeMap<Label, G::LoopInfo>,
 }
@@ -76,34 +82,40 @@ impl<'env> Context<'env> {
         Label(count)
     }
 
-    fn enter_named_block(&mut self, name: Var, is_loop_stmt: bool) -> (Label, Label) {
+    fn enter_named_block(
+        &mut self,
+        name: BlockLabel,
+        block_type: NamedBlockType,
+    ) -> (Label, Label) {
         let start_label = self.new_label();
         let end_label = self.new_label();
-        self.loop_bounds.insert(
-            start_label,
-            LoopInfo {
-                is_loop_stmt,
-                loop_end: G::LoopEnd::Target(end_label),
-            },
-        );
+        if matches!(block_type, NamedBlockType::Loop | NamedBlockType::While) {
+            self.loop_bounds.insert(
+                start_label,
+                LoopInfo {
+                    is_loop_stmt: matches!(block_type, NamedBlockType::Loop),
+                    loop_end: G::LoopEnd::Target(end_label),
+                },
+            );
+        }
         self.named_blocks
             .add(name, (start_label, end_label))
             .expect("ICE reused block name");
         (start_label, end_label)
     }
 
-    fn exit_named_block(&mut self, name: &Var) {
+    fn exit_named_block(&mut self, name: &BlockLabel) {
         self.named_blocks.remove(name);
     }
 
-    fn named_block_start_label(&mut self, name: &Var) -> Label {
+    fn named_block_start_label(&mut self, name: &BlockLabel) -> Label {
         self.named_blocks
             .get(name)
             .expect("ICE named block with no entry")
             .0
     }
 
-    fn named_block_end_label(&mut self, name: &Var) -> Label {
+    fn named_block_end_label(&mut self, name: &BlockLabel) -> Label {
         self.named_blocks
             .get(name)
             .expect("ICE named block with no entry")
@@ -794,7 +806,7 @@ fn statement(
             cond: (test_block, test),
             block: body,
         } => {
-            let (start_label, end_label) = context.enter_named_block(name, false);
+            let (start_label, end_label) = context.enter_named_block(name, NamedBlockType::While);
             let body_label = context.new_label();
 
             let entry_block = VecDeque::from([make_jump(sloc, start_label, false)]);
@@ -833,7 +845,27 @@ fn statement(
             block: body,
             has_break: _,
         } => {
-            let (start_label, end_label) = context.enter_named_block(name, true);
+            let (start_label, end_label) = context.enter_named_block(name, NamedBlockType::Loop);
+
+            let entry_block = VecDeque::from([make_jump(sloc, start_label, false)]);
+
+            let (body_entry_block, body_blocks) = block_(
+                context,
+                with_last(body, make_jump(sloc, start_label, false)),
+            );
+
+            context.exit_named_block(&name);
+
+            let new_blocks = [(start_label, body_entry_block)]
+                .into_iter()
+                .chain(body_blocks)
+                .chain([(end_label, current_block)])
+                .collect::<BlockList>();
+
+            (entry_block, new_blocks)
+        }
+        S::NamedBlock { name, block: body } => {
+            let (start_label, end_label) = context.enter_named_block(name, NamedBlockType::Named);
 
             let entry_block = VecDeque::from([make_jump(sloc, start_label, false)]);
 
