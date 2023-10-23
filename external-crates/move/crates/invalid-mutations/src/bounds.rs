@@ -5,8 +5,8 @@
 use move_binary_format::{
     errors::{bounds_error, PartialVMError},
     file_format::{
-        AddressIdentifierIndex, CompiledModule, FunctionHandleIndex, IdentifierIndex,
-        ModuleHandleIndex, SignatureIndex, StructDefinitionIndex, StructHandleIndex, TableIndex,
+        AddressIdentifierIndex, CompiledModule, DataTypeHandleIndex, FunctionHandleIndex,
+        IdentifierIndex, ModuleHandleIndex, SignatureIndex, StructDefinitionIndex, TableIndex,
     },
     internals::ModuleIndex,
     views::{ModuleView, SignatureTokenView},
@@ -49,17 +49,17 @@ impl PointerKind {
 
         match src_kind {
             ModuleHandle => &[One(AddressIdentifier), One(Identifier)],
-            StructHandle => &[One(ModuleHandle), One(Identifier)],
+            DataTypeHandle => &[One(ModuleHandle), One(Identifier)],
             FunctionHandle => &[
                 One(ModuleHandle),
                 One(Identifier),
                 One(Signature),
                 One(Signature),
             ],
-            StructDefinition => &[One(StructHandle), Star(StructHandle)],
+            StructDefinition => &[One(DataTypeHandle), Star(DataTypeHandle)],
             FunctionDefinition => &[One(FunctionHandle), One(Signature)],
             FriendDeclaration => &[One(AddressIdentifier), One(Identifier)],
-            Signature => &[Star(StructHandle)],
+            Signature => &[Star(DataTypeHandle)],
             FieldHandle => &[One(StructDefinition)],
             _ => &[],
         }
@@ -75,7 +75,7 @@ impl PointerKind {
 
 pub static VALID_POINTER_SRCS: &[IndexKind] = &[
     IndexKind::ModuleHandle,
-    IndexKind::StructHandle,
+    IndexKind::DataTypeHandle,
     IndexKind::FunctionHandle,
     IndexKind::FieldHandle,
     IndexKind::StructDefinition,
@@ -273,11 +273,11 @@ impl ApplyOutOfBoundsContext {
             (ModuleHandle, Identifier) => {
                 self.module.module_handles[src_idx].name = IdentifierIndex(new_idx)
             }
-            (StructHandle, ModuleHandle) => {
-                self.module.struct_handles[src_idx].module = ModuleHandleIndex(new_idx)
+            (DataTypeHandle, ModuleHandle) => {
+                self.module.data_type_handles[src_idx].module = ModuleHandleIndex(new_idx)
             }
-            (StructHandle, Identifier) => {
-                self.module.struct_handles[src_idx].name = IdentifierIndex(new_idx)
+            (DataTypeHandle, Identifier) => {
+                self.module.data_type_handles[src_idx].name = IdentifierIndex(new_idx)
             }
             (FunctionHandle, ModuleHandle) => {
                 self.module.function_handles[src_idx].module = ModuleHandleIndex(new_idx)
@@ -288,8 +288,8 @@ impl ApplyOutOfBoundsContext {
             (FunctionHandle, Signature) => {
                 self.module.function_handles[src_idx].parameters = SignatureIndex(new_idx)
             }
-            (StructDefinition, StructHandle) => {
-                self.module.struct_defs[src_idx].struct_handle = StructHandleIndex(new_idx)
+            (StructDefinition, DataTypeHandle) => {
+                self.module.struct_defs[src_idx].struct_handle = DataTypeHandleIndex(new_idx)
             }
             (FunctionDefinition, FunctionHandle) => {
                 self.module.function_defs[src_idx].function = FunctionHandleIndex(new_idx)
@@ -301,11 +301,11 @@ impl ApplyOutOfBoundsContext {
                     .unwrap()
                     .locals = SignatureIndex(new_idx)
             }
-            (Signature, StructHandle) => {
+            (Signature, DataTypeHandle) => {
                 let (actual_src_idx, arg_idx) = self.sig_structs[src_idx];
                 src_idx = actual_src_idx.into_index();
                 self.module.signatures[src_idx].0[arg_idx]
-                    .debug_set_sh_idx(StructHandleIndex(new_idx));
+                    .debug_set_sh_idx(DataTypeHandleIndex(new_idx));
             }
             (FieldHandle, StructDefinition) => {
                 self.module.field_handles[src_idx].owner = StructDefinitionIndex(new_idx)
@@ -351,12 +351,12 @@ impl ApplyOutOfBoundsContext {
     }
 }
 
-fn struct_handle(token: &SignatureToken) -> Option<StructHandleIndex> {
+fn struct_handle(token: &SignatureToken) -> Option<DataTypeHandleIndex> {
     use SignatureToken::*;
 
     match token {
-        Struct(sh_idx) => Some(*sh_idx),
-        StructInstantiation(sh_idx, _) => Some(*sh_idx),
+        DataType(sh_idx) => Some(*sh_idx),
+        DataTypeInstantiation(sh_idx, _) => Some(*sh_idx),
         Reference(token) | MutableReference(token) => struct_handle(token),
         Bool | U8 | U16 | U32 | U64 | U128 | U256 | Address | Signer | Vector(_)
         | TypeParameter(_) => None,

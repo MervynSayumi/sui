@@ -21,7 +21,7 @@ use module_generation::generate_module;
 use move_binary_format::{
     access::ModuleAccess,
     file_format::{
-        AbilitySet, CompiledModule, FunctionDefinitionIndex, SignatureToken, StructHandleIndex,
+        AbilitySet, CompiledModule, DataTypeHandleIndex, FunctionDefinitionIndex, SignatureToken,
     },
 };
 use move_bytecode_verifier::verify_module_unmetered;
@@ -96,8 +96,8 @@ fn run_vm(module: CompiledModule) -> Result<(), VMStatus> {
             | SignatureToken::U8
             | SignatureToken::U128
             | SignatureToken::Signer
-            | SignatureToken::Struct(_)
-            | SignatureToken::StructInstantiation(_, _)
+            | SignatureToken::DataType(_)
+            | SignatureToken::DataTypeInstantiation(_, _)
             | SignatureToken::Reference(_)
             | SignatureToken::MutableReference(_)
             | SignatureToken::TypeParameter(_)
@@ -395,8 +395,8 @@ pub(crate) fn substitute(token: &SignatureToken, tys: &[SignatureToken]) -> Sign
         Address => Address,
         Signer => Signer,
         Vector(ty) => Vector(Box::new(substitute(ty, tys))),
-        Struct(idx) => Struct(*idx),
-        StructInstantiation(idx, type_params) => StructInstantiation(
+        DataType(idx) => DataType(*idx),
+        DataTypeInstantiation(idx, type_params) => DataTypeInstantiation(
             *idx,
             type_params.iter().map(|ty| substitute(ty, tys)).collect(),
         ),
@@ -430,12 +430,12 @@ pub fn abilities(
             vec![abilities(module, ty, constraints)],
         )
         .unwrap(),
-        Struct(idx) => {
-            let sh = module.struct_handle_at(*idx);
+        DataType(idx) => {
+            let sh = module.data_type_handle_at(*idx);
             sh.abilities
         }
-        StructInstantiation(idx, type_args) => {
-            let sh = module.struct_handle_at(*idx);
+        DataTypeInstantiation(idx, type_args) => {
+            let sh = module.data_type_handle_at(*idx);
             let declared_abilities = sh.abilities;
             let declared_phantom_parameters =
                 sh.type_parameters.iter().map(|param| param.is_phantom);
@@ -454,14 +454,18 @@ pub fn abilities(
 
 pub(crate) fn get_struct_handle_from_reference(
     reference_signature: &SignatureToken,
-) -> Option<StructHandleIndex> {
+) -> Option<DataTypeHandleIndex> {
     match reference_signature {
         SignatureToken::Reference(signature) => match **signature {
-            SignatureToken::StructInstantiation(idx, _) | SignatureToken::Struct(idx) => Some(idx),
+            SignatureToken::DataTypeInstantiation(idx, _) | SignatureToken::DataType(idx) => {
+                Some(idx)
+            }
             _ => None,
         },
         SignatureToken::MutableReference(signature) => match **signature {
-            SignatureToken::StructInstantiation(idx, _) | SignatureToken::Struct(idx) => Some(idx),
+            SignatureToken::DataTypeInstantiation(idx, _) | SignatureToken::DataType(idx) => {
+                Some(idx)
+            }
             _ => None,
         },
         _ => None,
@@ -475,8 +479,8 @@ pub(crate) fn get_type_actuals_from_reference(
 
     match token {
         Reference(box_) | MutableReference(box_) => match &**box_ {
-            StructInstantiation(_, tys) => Some(tys.clone()),
-            Struct(_) => Some(vec![]),
+            DataTypeInstantiation(_, tys) => Some(tys.clone()),
+            DataType(_) => Some(vec![]),
             _ => None,
         },
         Bool
@@ -486,8 +490,8 @@ pub(crate) fn get_type_actuals_from_reference(
         | Address
         | Signer
         | Vector(_)
-        | Struct(_)
-        | StructInstantiation(_, _)
+        | DataType(_)
+        | DataTypeInstantiation(_, _)
         | TypeParameter(_)
         | U16
         | U32
