@@ -523,15 +523,15 @@ impl<'env> Context<'env> {
                 Some(BlockLabel(sp(loc, nvar_)))
             } else {
                 let msg = format!(
-                    "Invalid {}. Can't use with {} blocks",
-                    verb, expected_block_type
+                    "Invalid usage of '{}' with {} block label",
+                    verb, block_type
                 );
                 self.env
                     .add_diag(diag!(NameResolution::UnboundVariable, (loc, msg)));
                 None
             }
         } else {
-            let msg = format!("Invalid {}. Unbound label '{}'", expected_block_type, name);
+            let msg = format!("Invalid {}. Unbound label '{}", verb, name);
             self.env
                 .add_diag(diag!(NameResolution::UnboundVariable, (loc, msg)));
             None
@@ -568,7 +568,6 @@ pub fn program(
     pre_compiled_lib: Option<&FullyCompiledProgram>,
     prog: E::Program,
 ) -> N::Program {
-    println!("got to naming");
     let mut context = Context::new(compilation_env, pre_compiled_lib, &prog);
     let E::Program {
         modules: emodules,
@@ -923,6 +922,7 @@ fn function(
     assert!(context.used_locals.is_empty());
     assert!(context.used_fun_tparams.is_empty());
     assert!(!context.translating_fun);
+    assert!(context.nominal_block_id == 0);
     context.env.add_warning_filter_scope(warning_filter.clone());
     spec_blocks(spec_dependencies, specs.values());
     context.local_scopes = vec![BTreeMap::new()];
@@ -961,6 +961,7 @@ fn function(
     context.used_fun_tparams = BTreeSet::new();
     context.env.pop_warning_filter_scope();
     context.translating_fun = false;
+    context.nominal_block_id = 0;
     f
 }
 
@@ -1400,10 +1401,6 @@ fn exp_(context: &mut Context, e: E::Exp) -> N::Exp {
                 {
                     NE::Give(return_name, out_rhs)
                 } else {
-                    let msg = format!("Could not resolve label {} for 'return'", block_name);
-                    context
-                        .env
-                        .add_diag(diag!(TypeSafety::InvalidControlFlow, (eloc, msg)));
                     NE::UnresolvedError
                 }
             } else {
@@ -1411,37 +1408,44 @@ fn exp_(context: &mut Context, e: E::Exp) -> N::Exp {
             }
         }
         EE::Break(name_opt, rhs) => {
-            let loop_name_opt = if let Some(loop_name) = name_opt {
-                context.resolve_nominal_label("break", NominalBlockType::Loop, loop_name)
-            } else {
-                context.current_loop(eloc)
-            };
             let out_rhs = exp(context, *rhs);
-            if let Some(loop_name) = loop_name_opt {
-                NE::Give(loop_name, out_rhs)
-            } else {
-                let msg = "Invalid usage of 'break'. 'break' can only be used inside a loop body";
+            if let Some(loop_name) = name_opt {
                 context
-                    .env
-                    .add_diag(diag!(TypeSafety::InvalidLoopControl, (eloc, msg)));
-                NE::UnresolvedError
+                    .resolve_nominal_label("break", NominalBlockType::Loop, loop_name)
+                    .map(|name| NE::Give(name, out_rhs))
+                    .unwrap_or_else(|| NE::UnresolvedError)
+            } else {
+                context
+                    .current_loop(eloc)
+                    .map(|name| NE::Give(name, out_rhs))
+                    .unwrap_or_else(|| {
+                        let msg = "Invalid usage of 'break'. \
+                            'break' can only be used inside a loop body";
+                        context
+                            .env
+                            .add_diag(diag!(TypeSafety::InvalidLoopControl, (eloc, msg)));
+                        NE::UnresolvedError
+                    })
             }
         }
         EE::Continue(name_opt) => {
-            let loop_name_opt = if let Some(loop_name) = name_opt {
-                context.resolve_nominal_label("continue", NominalBlockType::Loop, loop_name)
-            } else {
-                context.current_loop(eloc)
-            };
-            if let Some(loop_name) = loop_name_opt {
-                NE::Continue(loop_name)
-            } else {
-                let msg =
-                    "Invalid usage of 'continue'. 'continue' can only be used inside a loop body";
+            if let Some(loop_name) = name_opt {
                 context
-                    .env
-                    .add_diag(diag!(TypeSafety::InvalidLoopControl, (eloc, msg)));
-                NE::UnresolvedError
+                    .resolve_nominal_label("continue", NominalBlockType::Loop, loop_name)
+                    .map(NE::Continue)
+                    .unwrap_or_else(|| NE::UnresolvedError)
+            } else {
+                context
+                    .current_loop(eloc)
+                    .map(NE::Continue)
+                    .unwrap_or_else(|| {
+                        let msg = "Invalid usage of 'continue'. \
+                            'continue' can only be used inside a loop body";
+                        context
+                            .env
+                            .add_diag(diag!(TypeSafety::InvalidLoopControl, (eloc, msg)));
+                        NE::UnresolvedError
+                    })
             }
         }
 

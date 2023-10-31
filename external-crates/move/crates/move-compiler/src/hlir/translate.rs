@@ -10,7 +10,7 @@ use crate::{
     diag,
     editions::{FeatureGate, Flavor},
     expansion::ast::{self as E, Fields, ModuleIdent},
-    hlir::ast::{self as H, Block, MoveOpAnnotation},
+    hlir::ast::{self as H, Block, BlockLabel, MoveOpAnnotation},
     hlir::detect_dead_code::program as detect_dead_code_analysis,
     naming::ast as N,
     parser::ast::{Ability_, BinOp, BinOp_, ConstantName, Field, FunctionName, StructName},
@@ -768,7 +768,7 @@ fn tail(
             };
             context.record_named_block_binders(name, binders);
             context.record_named_block_type(name, out_type.clone());
-            let (loop_body, has_break) = process_loop_body(context, *body);
+            let (loop_body, has_break) = process_loop_body(context, &name, *body);
             block.push_back(sp(
                 eloc,
                 S::Loop {
@@ -1006,7 +1006,7 @@ fn value(
             let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
             context.record_named_block_binders(name, binders);
             context.record_named_block_type(name, out_type.clone());
-            let (loop_body, has_break) = process_loop_body(context, *body);
+            let (loop_body, has_break) = process_loop_body(context, &name, *body);
             block.push_back(sp(
                 eloc,
                 S::Loop {
@@ -1041,7 +1041,7 @@ fn value(
                     block: body_block,
                 },
             ));
-            Some(bound_exp)
+            bound_exp
         }
         E::Block(seq) => value_block(context, block, Some(&out_type), seq),
 
@@ -1467,7 +1467,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
             let mut cond_block = make_block!();
             let cond_exp = value(context, &mut cond_block, Some(&tbool(eloc)), *test);
             let cond = (cond_block, Box::new(cond_exp));
-            let name = translate_var(name);
+            let name = translate_loop_label(name);
             // While loops can still use break and continue so we build them dummy binders.
             context.record_named_block_binders(name, vec![]);
             context.record_named_block_type(name, tunit(eloc));
@@ -1488,7 +1488,7 @@ fn statement(context: &mut Context, block: &mut Block, e: T::Exp) {
             let (binders, bound_exp) = make_binders(context, eloc, out_type.clone());
             context.record_named_block_binders(name, binders);
             context.record_named_block_type(name, out_type);
-            let (loop_body, has_break) = process_loop_body(context, *body);
+            let (loop_body, has_break) = process_loop_body(context, &name, *body);
             block.push_back(sp(
                 eloc,
                 S::Loop {
@@ -1623,11 +1623,11 @@ fn make_command(loc: Loc, command: H::Command_) -> H::Statement {
     sp(loc, H::Statement_::Command(sp(loc, command)))
 }
 
-fn process_loop_body(context: &mut Context, body: T::Exp) -> (H::Block, bool) {
+fn process_loop_body(context: &mut Context, name: &BlockLabel, body: T::Exp) -> (H::Block, bool) {
     let mut loop_block = make_block!();
     statement(context, &mut loop_block, body);
     // nonlocal control flow may have removed the break, so we recompute has_break.
-    let has_break = still_has_break(&loop_block);
+    let has_break = still_has_break(name, &loop_block);
     (loop_block, has_break)
 }
 
@@ -1725,28 +1725,28 @@ macro_rules! hcmd {
     };
 }
 
-fn still_has_break(block: &Block) -> bool {
+fn still_has_break(name: &BlockLabel, block: &Block) -> bool {
     use H::{Command_ as C, Statement_ as S};
 
-    fn has_break(sp!(_, stmt_): &H::Statement) -> bool {
+    fn has_break(name: &BlockLabel, sp!(_, stmt_): &H::Statement) -> bool {
         match stmt_ {
             S::IfElse {
                 if_block,
                 else_block,
                 ..
-            } => has_break_block(if_block) || has_break_block(else_block),
-            S::While { block, .. } => has_break_block(block),
-            S::Loop { .. } => false,
-            hcmd!(C::Break(_)) => true,
+            } => has_break_block(name, if_block) || has_break_block(name, else_block),
+            S::While { block, .. } => has_break_block(name, block),
+            S::Loop { block, .. } => has_break_block(name, block),
+            hcmd!(C::Break(break_name)) => break_name == name,
             _ => false,
         }
     }
 
-    fn has_break_block(block: &Block) -> bool {
-        block.iter().any(has_break)
+    fn has_break_block(name: &BlockLabel, block: &Block) -> bool {
+        block.iter().any(|stmt| has_break(name, stmt))
     }
 
-    has_break_block(block)
+    has_break_block(name, block)
 }
 
 //**************************************************************************************************

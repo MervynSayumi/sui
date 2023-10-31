@@ -577,7 +577,16 @@ fn statement(context: &mut Context, e: &T::Exp) -> Option<ControlFlow> {
                 body_result
             }
         }
-        E::NamedBlock(_, seq) => statement_block(context, seq, true, false),
+        E::NamedBlock(name, seq) => {
+            // a named block in statement position checks if the body exits that block; if so, at
+            // least some of that code is live.
+            let body_result = value_block(context, seq);
+            if exits_named_block(*name, body_result) {
+                None
+            } else {
+                body_result
+            }
+        }
         E::Block(seq) => statement_block(context, seq, true, false),
         E::Return(rhs) => {
             if let Some(rhs_control_flow) = value(context, rhs) {

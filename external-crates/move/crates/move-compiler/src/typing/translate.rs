@@ -50,7 +50,6 @@ pub fn program(
             scripts: nscripts,
         },
     } = prog;
-    println!("got to typing");
     let mut context = Context::new(compilation_env, pre_compiled_lib, info);
 
     // we extract module use funs into the module info context
