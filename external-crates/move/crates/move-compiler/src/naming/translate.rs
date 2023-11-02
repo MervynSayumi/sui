@@ -917,12 +917,12 @@ fn function(
         body,
         specs,
     } = ef;
-    assert!(context.local_scopes.is_empty());
-    assert!(context.local_count.is_empty());
-    assert!(context.used_locals.is_empty());
-    assert!(context.used_fun_tparams.is_empty());
     assert!(!context.translating_fun);
+    assert!(context.local_count.is_empty());
+    assert!(context.local_scopes.is_empty());
     assert!(context.nominal_block_id == 0);
+    assert!(context.used_fun_tparams.is_empty());
+    assert!(context.used_locals.is_empty());
     context.env.add_warning_filter_scope(warning_filter.clone());
     spec_blocks(spec_dependencies, specs.values());
     context.local_scopes = vec![BTreeMap::new()];
@@ -955,13 +955,13 @@ fn function(
     fake_natives::function(context.env, module_opt, name, &f);
     let used_locals = std::mem::take(&mut context.used_locals);
     remove_unused_bindings_function(context, &used_locals, &mut f);
-    context.local_scopes = vec![];
     context.local_count = BTreeMap::new();
-    context.used_locals = BTreeSet::new();
+    context.local_scopes = vec![];
+    context.nominal_block_id = 0;
     context.used_fun_tparams = BTreeSet::new();
+    context.used_locals = BTreeSet::new();
     context.env.pop_warning_filter_scope();
     context.translating_fun = false;
-    context.nominal_block_id = 0;
     f
 }
 
@@ -1083,6 +1083,7 @@ fn constant(context: &mut Context, _name: ConstantName, econstant: E::Constant) 
     context.local_scopes = vec![];
     context.local_count = BTreeMap::new();
     context.used_locals = BTreeSet::new();
+    context.nominal_block_id = 0;
     context.env.pop_warning_filter_scope();
     N::Constant {
         warning_filter,

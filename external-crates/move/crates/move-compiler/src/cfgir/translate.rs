@@ -399,6 +399,7 @@ fn dependent_constants(constant: &H::Constant) -> BTreeSet<ConstantName> {
                 dep_block(set, block)
             }
             S::Loop { block, .. } => dep_block(set, block),
+            S::NamedBlock { block, .. } => dep_block(set, block),
         }
     }
 
