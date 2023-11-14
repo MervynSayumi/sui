@@ -66,7 +66,7 @@ module 0x42::m {
 }
 
 //# run
-script {
+module 0x64::runner {
 use 0x42::m;
 fun main() {
     assert!(m::t00() == 10, 0);
