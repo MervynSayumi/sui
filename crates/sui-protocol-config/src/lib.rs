@@ -95,6 +95,8 @@ const MAX_PROTOCOL_VERSION: u64 = 32;
 // Version 32: Add delete functions for VerifiedID and VerifiedIssuer.
 //             Add sui::token module to sui framework.
 //             Enable transfer to object in testnet.
+//             Enable accepting Multisig containing zkLogin sig.
+//             Enforce upper bound for max epoch and accepts Google's other iss in zkLogin signature.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -345,6 +347,9 @@ struct FeatureFlags {
     // If true, multisig containing zkLogin sig is accepted.
     #[serde(skip_serializing_if = "is_false")]
     accept_zklogin_in_multisig: bool,
+    // If true, verify the upper bound of max_epoch in a zkLogin signature, also checks the new iss for Google.
+    #[serde(skip_serializing_if = "is_false")]
+    verify_zklogin_max_epoch_and_new_iss: bool,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -1043,6 +1048,9 @@ impl ProtocolConfig {
         self.feature_flags.accept_zklogin_in_multisig
     }
 
+    pub fn verify_zklogin_max_epoch_and_new_iss(&self) -> bool {
+        self.feature_flags.verify_zklogin_max_epoch_and_new_iss
+    }
     pub fn throughput_aware_consensus_submission(&self) -> bool {
         self.feature_flags.throughput_aware_consensus_submission
     }
@@ -1659,11 +1667,15 @@ impl ProtocolConfig {
                 }
                 32 => {
                     cfg.feature_flags.accept_zklogin_in_multisig = true;
+<<<<<<< HEAD
                     // enable receiving objects in devnet and testnet
                     if chain != Chain::Mainnet {
                         cfg.transfer_receive_object_cost_base = Some(52);
                         cfg.feature_flags.receive_objects = true;
                     }
+=======
+                    cfg.feature_flags.verify_zklogin_max_epoch_and_new_iss = true;
+>>>>>>> 140c12ff3d (zklogin: set upper bound to max_epoch, accept google's alternative iss)
                 }
                 // Use this template when making changes:
                 //

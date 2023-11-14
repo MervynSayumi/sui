@@ -697,6 +697,7 @@ impl AuthorityPerEpochStore {
             zklogin_env,
             protocol_config.verify_legacy_zklogin_address(),
             protocol_config.accept_zklogin_in_multisig(),
+            protocol_config.verify_zklogin_max_epoch_and_new_iss(),
         );
 
         let authenticator_state_exists = epoch_start_configuration

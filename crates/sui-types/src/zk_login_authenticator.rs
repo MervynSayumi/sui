@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use shared_crypto::intent::IntentMessage;
 use std::hash::Hash;
 use std::hash::Hasher;
-//#[cfg(any(test, feature = "test-utils"))]
 #[cfg(test)]
 #[path = "unit_tests/zk_login_authenticator_test.rs"]
 mod zk_login_authenticator_test;
@@ -85,11 +84,25 @@ impl AuthenticatorTrait for ZkLoginAuthenticator {
     fn check_author(&self) -> bool {
         true
     }
-    fn verify_user_authenticator_epoch(&self, epoch: EpochId) -> SuiResult {
-        // Verify the max epoch in aux inputs is <= the current epoch of authority.
+    fn verify_user_authenticator_epoch(&self, epoch: EpochId, verify_max_epoch: bool) -> SuiResult {
+        if verify_max_epoch && self.get_max_epoch() > epoch + 2 {
+            return Err(SuiError::InvalidSignature {
+                error: format!(
+                    "ZKLogin max epoch too large {}, current epoch {}",
+                    self.get_max_epoch(),
+                    epoch
+                ),
+            });
+        }
+
+        // Always ensure that max epoch is greater than the current epoch.
         if epoch > self.get_max_epoch() {
             return Err(SuiError::InvalidSignature {
-                error: format!("ZKLogin expired at epoch {}", self.get_max_epoch()),
+                error: format!(
+                    "ZKLogin expired at epoch {}, current epoch {}",
+                    self.get_max_epoch(),
+                    epoch
+                ),
             });
         }
         Ok(())
@@ -165,6 +178,9 @@ impl AuthenticatorTrait for ZkLoginAuthenticator {
             &extended_pk_bytes,
             &aux_verify_data.oidc_provider_jwks,
             &aux_verify_data.zk_login_env,
+            // Flag loaded from protocol config, decides whether the alternative iss
+            // for Google (i.e. "accounts.google.com") is accepted.
+            aux_verify_data.verify_zklogin_max_epoch_and_new_iss,
         )
         .map_err(|e| SuiError::InvalidSignature {
             error: e.to_string(),
