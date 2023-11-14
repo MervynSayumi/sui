@@ -1839,7 +1839,7 @@ impl AstDebug for Exp_ {
                 e.ast_debug(w);
             }
             E::NamedBlock(name, seq) => {
-                w.write(format!("{}: ", name));
+                w.write(format!("'{}: ", name));
                 w.block(|w| seq.ast_debug(w))
             }
             E::Block(seq) => w.block(|w| seq.ast_debug(w)),
