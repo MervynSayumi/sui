@@ -529,10 +529,10 @@ impl<'env> Context<'env> {
                 let mut diag = diag!(NameResolution::InvalidLabel, (loc, msg));
                 match expected_block_type {
                     NominalBlockType::Loop => {
-                        diag.add_note("Loop labels may only be used with 'break' and 'continue', not 'return'");
+                        diag.add_note("Named block labels may only be used with 'return', not 'break' or 'continue'.");
                     }
                     NominalBlockType::Block => {
-                        diag.add_note("Named block labels may only be used with 'return', not 'break' or 'continue'.");
+                        diag.add_note("Loop labels may only be used with 'break' and 'continue', not 'return'");
                     }
                 }
                 self.env.add_diag(diag);
