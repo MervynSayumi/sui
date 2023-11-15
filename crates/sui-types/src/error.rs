@@ -670,17 +670,6 @@ impl From<&str> for SuiError {
     }
 }
 
-// impl From<FastCryptoError> for SuiError {
-//     fn from(kind: FastCryptoError) -> Self {
-//         match kind {
-//             FastCryptoError::InvalidSignature => SuiError::InvalidSignature {
-//                 error: "Invalid signature".to_string(),
-//             },
-//             _ => SuiError::Unknown("Unknown cryptography error".to_string()),
-//         }
-//     }
-// }
-
 impl TryFrom<SuiError> for UserInputError {
     type Error = anyhow::Error;
 

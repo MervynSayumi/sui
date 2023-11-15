@@ -50,7 +50,8 @@ use tabled::builder::Builder;
 use tabled::settings::Rotate;
 use tabled::settings::{object::Rows, Modify, Width};
 use tracing::info;
-
+use fastcrypto::secp256k1::Secp256k1KeyPair;
+use fastcrypto::secp256r1::Secp256r1KeyPair;
 #[cfg(test)]
 #[path = "unit_tests/keytool_tests.rs"]
 mod keytool_tests;
@@ -507,21 +508,27 @@ impl KeyToolCommand {
             } => {
                 // check if input is a private key -- should start with 0x
                 if input_string.starts_with("0x") {
-                    let bytes = Hex::decode(&input_string).map_err(|_| {
+                    let bytes: Vec<u8> = Hex::decode(&input_string).map_err(|_| {
                         anyhow!("Private key is malformed. Importing private key failed.")
                     })?;
-                    match key_scheme {
+                    let skp = match key_scheme {
                             SignatureScheme::ED25519 => {
-                                let kp = Ed25519KeyPair::from_bytes(&bytes).map_err(|_| anyhow!("Cannot decode ed25519 keypair from the private key. Importing private key failed."))?;
-                                let skp = SuiKeyPair::Ed25519(kp);
-                                let key = Key::from(&skp);
-                                keystore.add_key(skp)?;
-                                CommandOutput::Import(key)
+                                let kp = Ed25519KeyPair::from_bytes(&bytes)?;
+                                SuiKeyPair::Ed25519(kp)
                             }
-                            _ => return Err(anyhow!(
-                                "Only ed25519 signature scheme is supported for importing private keys at the moment."
-                            ))
-                        }
+                            SignatureScheme::Secp256k1 => {
+                                let kp = Secp256k1KeyPair::from_bytes(&bytes)?;
+                                SuiKeyPair::Secp256k1(kp)
+                            }
+                            SignatureScheme::Secp256r1 => {
+                                let kp = Secp256r1KeyPair::from_bytes(&bytes)?;
+                                SuiKeyPair::Secp256r1(kp)
+                            }
+                            _ => return Err(anyhow!("Unsupported scheme"))
+                        };
+                        let key = Key::from(&skp);
+                        keystore.add_key(skp)?;
+                        CommandOutput::Import(key)
                 } else {
                     let sui_address = keystore.import_from_mnemonic(
                         &input_string,
