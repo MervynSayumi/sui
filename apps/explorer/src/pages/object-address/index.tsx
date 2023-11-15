@@ -19,11 +19,11 @@ import { OwnedObjects } from '~/components/OwnedObjects';
 import { LOCAL_STORAGE_SPLIT_PANE_KEYS, SplitPanes } from '~/ui/SplitPanes';
 import { TabHeader } from '~/ui/Tabs';
 import { Banner } from '~/ui/Banner';
-import { FieldsContent, TokenView } from '~/pages/object-result/views/TokenView';
+import { FieldsContent } from '~/pages/object-result/views/TokenView';
 import { Divider } from '~/ui/Divider';
-import { LoadingIndicator } from '@mysten/ui';
+import { Heading, LoadingIndicator } from '@mysten/ui';
 import { useBreakpoint } from '~/hooks/useBreakpoint';
-import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress/TransactionBlocksForAddress';
+import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress';
 import { TransactionsForAddress } from '~/components/transactions/TransactionsForAddress';
 
 const LEFT_RIGHT_PANEL_MIN_SIZE = 30;
@@ -64,17 +64,15 @@ function Header({
 	);
 }
 
-function SUINSHeader({ name }: { name: string }) {
-	const { data: address, isLoading, error } = useResolveSuiNSAddress(name);
-
-	return <Header address={address ?? name} loading={isLoading} error={error} />;
-}
-
 function OwnedObjectsSection({ address }: { address: string }) {
 	const isMediumOrAbove = useBreakpoint('md');
 
 	const leftPane = {
-		panel: <OwnedCoins id={address} />,
+		panel: (
+			<div className="mb-5">
+				<OwnedCoins id={address} />
+			</div>
+		),
 		minSize: LEFT_RIGHT_PANEL_MIN_SIZE,
 		defaultSize: LEFT_RIGHT_PANEL_MIN_SIZE,
 	};
@@ -131,13 +129,29 @@ function ObjectAddressContent({ address, error }: { address: string; error?: Err
 				<FieldsContent objectId={address} />
 			</section>
 
-			<section className="mt-14">
-				<TransactionsForAddress address={address} type="address" />
-				<TransactionBlocksForAddress
-					address={address}
-					isObject
-					tableHeader="Object Transaction Blocks"
-				/>
+			<section className="mt-14 flex flex-col md:flex-row">
+				<div className="basis-1/2 pr-0 md:pr-5">
+					<div className="border-b border-gray-45 pb-5">
+						<Heading color="gray-90" variant="heading4/semibold">
+							Address Transaction Blocks
+						</Heading>
+					</div>
+
+					<div className="pt-5">
+						<TransactionsForAddress address={address} type="address" />
+					</div>
+				</div>
+
+				<Divider vertical />
+
+				<div className="mt-14 basis-1/2 pl-0 md:mt-0 md:pl-5">
+					<TransactionBlocksForAddress
+						noBorderBottom
+						address={address}
+						isObject
+						tableHeader="Object Transaction Blocks"
+					/>
+				</div>
 			</section>
 		</div>
 	);

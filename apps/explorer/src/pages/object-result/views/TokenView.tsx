@@ -9,7 +9,7 @@ import { type ReactNode, useState } from 'react';
 
 import { DynamicFieldsCard } from '~/components/Object/DynamicFieldsCard';
 import { ObjectFieldsCard } from '~/components/Object/ObjectFieldsCard';
-import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress/TransactionBlocksForAddress';
+import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '~/ui/Tabs';
 
 function FieldsContainer({ children }: { children: ReactNode }) {
@@ -55,7 +55,7 @@ function useObjectFieldsCard(id: string) {
 
 	return {
 		loading: isPending || loadingNormalizedStruct,
-		error: isError || errorNormalizedMoveStruct,
+		isError: isError || errorNormalizedMoveStruct,
 		normalizedStructData,
 		suiObjectResponseData,
 		objectType,
@@ -68,7 +68,7 @@ export function FieldsContent({ objectId }: { objectId: string }) {
 		suiObjectResponseData,
 		objectType,
 		loading: objectFieldsCardLoading,
-		error: objectFieldsCardError,
+		isError: objectFieldsCardError,
 	} = useObjectFieldsCard(objectId);
 
 	const fieldsCount = normalizedStructData?.fields.length;
@@ -77,7 +77,13 @@ export function FieldsContent({ objectId }: { objectId: string }) {
 
 	const { data: dynamicFieldsData } = useGetDynamicFields(objectId);
 
+	const renderFields = !!fieldsCount;
 	const renderDynamicFields = !!dynamicFieldsData?.pages?.[0].data.length;
+
+	if (!renderFields && !renderDynamicFields) {
+		return null;
+	}
+
 	return (
 		<Tabs size="lg" value={activeTab} onValueChange={setActiveTab}>
 			<TabsList>

@@ -24,6 +24,7 @@ type TransactionBlocksForAddressProps = {
 	filter?: FILTER_VALUES;
 	isObject?: boolean;
 	tableHeader?: string;
+	noBorderBottom?: boolean;
 };
 
 enum PAGE_ACTIONS {
@@ -74,6 +75,7 @@ function TransactionBlocksForAddress({
 	filter = FILTER_VALUES.CHANGED,
 	isObject = false,
 	tableHeader,
+	noBorderBottom,
 }: TransactionBlocksForAddressProps) {
 	const [filterValue, setFilterValue] = useState(filter);
 	const [currentPageState, dispatch] = useReducer(reducer, {
@@ -122,7 +124,11 @@ function TransactionBlocksForAddress({
 					/>
 				) : (
 					<div>
-						<TableCard data={cardData.data} columns={cardData.columns} />
+						<TableCard
+							data={cardData.data}
+							columns={cardData.columns}
+							noBorderBottom={noBorderBottom}
+						/>
 					</div>
 				)}
 
