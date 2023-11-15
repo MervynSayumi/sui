@@ -124,6 +124,7 @@
 		"@mysten/build-scripts": "workspace:*",
 		"@types/node": "^20.4.2",
 		"@types/tmp": "^0.2.3",
+		"@types/websocket": "^1.0.9",
 		"cross-env": "^7.0.3",
 		"msw": "^1.2.2",
 		"tmp": "^0.2.1",
@@ -133,7 +134,8 @@
 		"typescript": "^5.1.6",
 		"vite": "^4.4.4",
 		"vitest": "^0.33.0",
-		"wait-on": "^7.0.1"
+		"wait-on": "^7.0.1",
+		"websocket": "^1.0.34"
 	},
 	"dependencies": {
 		"@mysten/bcs": "workspace:*",
