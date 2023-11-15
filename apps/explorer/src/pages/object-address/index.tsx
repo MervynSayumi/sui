@@ -21,7 +21,7 @@ import { TabHeader } from '~/ui/Tabs';
 import { Banner } from '~/ui/Banner';
 import { FieldsContent } from '~/pages/object-result/views/TokenView';
 import { Divider } from '~/ui/Divider';
-import { Heading, LoadingIndicator } from '@mysten/ui';
+import { Heading } from '@mysten/ui';
 import { useBreakpoint } from '~/hooks/useBreakpoint';
 import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress';
 import { TransactionsForAddress } from '~/components/transactions/TransactionsForAddress';
@@ -38,7 +38,7 @@ function Header({
 	error?: Error | null;
 }) {
 	const { data: domainName, isLoading, error: resolveSuinsError } = useResolveSuiNSName(address);
-	const { data, isPending, error: getObjectError, isError, isFetched } = useGetObject(address!);
+	const { data, isPending, error: getObjectError } = useGetObject(address!);
 	const errorText = getObjectError?.message ?? resolveSuinsError?.message ?? error?.message;
 
 	return (

@@ -39,7 +39,7 @@ export const router = sentryCreateBrowserRouter([
 			{ path: 'address/:id', element: <AddressResult /> },
 			{ path: 'validators', element: <ValidatorPageResult /> },
 			{ path: 'validator/:id', element: <ValidatorDetails /> },
-			{ path: 'object-address/:id', element: <ObjectAddress /> },
+			{ path: 'experimental--object-address/:id', element: <ObjectAddress /> },
 		],
 	},
 	{
@@ -63,10 +63,6 @@ export const router = sentryCreateBrowserRouter([
 		path: '/addresses/:id',
 		element: <RedirectWithId base="address" />,
 	},
-	// {
-	// 	path: 'object-address/:id',
-	// 	element: <ObjectAddress />,
-	// },
 	// 404 route:
 	{ path: '*', element: <Navigate to="/" replace /> },
 ]);
