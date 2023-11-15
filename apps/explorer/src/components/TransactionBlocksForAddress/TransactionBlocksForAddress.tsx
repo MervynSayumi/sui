@@ -23,6 +23,7 @@ type TransactionBlocksForAddressProps = {
 	address: string;
 	filter?: FILTER_VALUES;
 	isObject?: boolean;
+	tableHeader?: string;
 };
 
 enum PAGE_ACTIONS {
@@ -72,6 +73,7 @@ function TransactionBlocksForAddress({
 	address,
 	filter = FILTER_VALUES.CHANGED,
 	isObject = false,
+	tableHeader,
 }: TransactionBlocksForAddressProps) {
 	const [filterValue, setFilterValue] = useState(filter);
 	const [currentPageState, dispatch] = useReducer(reducer, {
@@ -94,7 +96,7 @@ function TransactionBlocksForAddress({
 		<div data-testid="tx">
 			<div className="flex items-center justify-between border-b border-gray-45 pb-5">
 				<Heading color="gray-90" variant="heading4/semibold">
-					Transaction Blocks
+					{tableHeader || 'Transaction Blocks'}
 				</Heading>
 
 				{isObject && (
