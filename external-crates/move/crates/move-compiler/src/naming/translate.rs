@@ -522,17 +522,23 @@ impl<'env> Context<'env> {
                 self.used_labels.insert(nvar_);
                 Some(BlockLabel(sp(loc, nvar_)))
             } else {
+                use NominalBlockType::*;
                 let msg = format!(
                     "Invalid usage of '{}' with a {} block label",
                     verb, block_type
                 );
                 let mut diag = diag!(NameResolution::InvalidLabel, (loc, msg));
-                match expected_block_type {
-                    NominalBlockType::Loop => {
+                // manually exhaustive to ensure we still cover everything if we add more forms
+                // (such as for macros).
+                match (block_type, expected_block_type) {
+                    (Loop, Block) => {
+                        diag.add_note("Loop labels may only be used with 'break' and 'continue', not 'return'");
+                    }
+                    (Block, Loop) => {
                         diag.add_note("Named block labels may only be used with 'return', not 'break' or 'continue'.");
                     }
-                    NominalBlockType::Block => {
-                        diag.add_note("Loop labels may only be used with 'break' and 'continue', not 'return'");
+                    (Loop, Loop) | (Block, Block) => {
+                        panic!("ICE impoosible match in label resolution")
                     }
                 }
                 self.env.add_diag(diag);

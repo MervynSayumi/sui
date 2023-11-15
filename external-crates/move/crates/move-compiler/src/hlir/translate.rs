@@ -885,7 +885,12 @@ fn value(
         let out_type = type_(context, e.ty.clone());
         let eloc = e.exp.loc;
         let out_vec = value_list(context, block, Some(&out_type), e);
-        return maybe_freeze(context, block, expected_type.cloned(), H::exp(out_type, sp(eloc, HE::Multiple(out_vec))));
+        return maybe_freeze(
+            context,
+            block,
+            expected_type.cloned(),
+            H::exp(out_type, sp(eloc, HE::Multiple(out_vec))),
+        );
     }
 
     let T::Exp {
@@ -1312,7 +1317,8 @@ fn value_list(
         .supports_feature(context.current_package, FeatureGate::Move2024Optimizations)
     {
         value_list_opt(context, result, ty, e)
-    } else if let TE::ExpList(items) = e.exp.value { // clippy insisted on this if structure!
+    } else if let TE::ExpList(items) = e.exp.value {
+        // clippy insisted on this if structure!
         value_list_items_to_vec(context, result, ty, e.exp.loc, items)
     } else if let TE::Unit { .. } = e.exp.value {
         vec![]
@@ -1717,7 +1723,6 @@ fn is_exp_list(e: &T::Exp) -> bool {
     use T::UnannotatedExp_ as E;
     matches!(e.exp.value, E::ExpList(_))
 }
-
 
 macro_rules! hcmd {
     ($cmd:pat) => {
