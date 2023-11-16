@@ -17,7 +17,7 @@ import { ObjectView } from '~/pages/object-result/views/ObjectView';
 import { OwnedCoins } from '~/components/OwnedCoins';
 import { OwnedObjects } from '~/components/OwnedObjects';
 import { LOCAL_STORAGE_SPLIT_PANE_KEYS, SplitPanes } from '~/ui/SplitPanes';
-import { TabHeader } from '~/ui/Tabs';
+import { TabHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '~/ui/Tabs';
 import { Banner } from '~/ui/Banner';
 import { FieldsContent } from '~/pages/object-result/views/TokenView';
 import { Divider } from '~/ui/Divider';
@@ -25,8 +25,14 @@ import { Heading } from '@mysten/ui';
 import { useBreakpoint } from '~/hooks/useBreakpoint';
 import TransactionBlocksForAddress from '~/components/TransactionBlocksForAddress';
 import { TransactionsForAddress } from '~/components/transactions/TransactionsForAddress';
+import { useState } from 'react';
 
 const LEFT_RIGHT_PANEL_MIN_SIZE = 30;
+
+enum TABS_TRANSACTIONS_VALUES {
+	ADDRESS = 'address',
+	OBJECT = 'object',
+}
 
 function Header({
 	address,
@@ -46,7 +52,7 @@ function Header({
 			<PageHeader
 				error={errorText}
 				loading={loading || isLoading || isPending}
-				type="Address"
+				type={data ? 'Object' : 'Address'}
 				title={address}
 				subtitle={domainName}
 				before={<ObjectDetailsHeader className="h-6 w-6" />}
@@ -69,7 +75,7 @@ function OwnedObjectsSection({ address }: { address: string }) {
 
 	const leftPane = {
 		panel: (
-			<div className="mb-5">
+			<div className="mb-5 h-coinsAndAssetsContainer">
 				<OwnedCoins id={address} />
 			</div>
 		),
@@ -108,6 +114,34 @@ function OwnedObjectsSection({ address }: { address: string }) {
 	);
 }
 
+function TransactionsSection({ address }: { address: string }) {
+	const [activeTab, setActiveTab] = useState<string>(TABS_TRANSACTIONS_VALUES.ADDRESS);
+
+	return (
+		<Tabs size="lg" value={activeTab} onValueChange={setActiveTab}>
+			<TabsList>
+				<TabsTrigger value={TABS_TRANSACTIONS_VALUES.ADDRESS}>
+					<Heading variant="heading4/semibold">Address</Heading>
+				</TabsTrigger>
+
+				<TabsTrigger value={TABS_TRANSACTIONS_VALUES.OBJECT}>
+					<Heading variant="heading4/semibold">Object</Heading>
+				</TabsTrigger>
+			</TabsList>
+
+			<ErrorBoundary>
+				<TabsContent value={TABS_TRANSACTIONS_VALUES.ADDRESS}>
+					<TransactionsForAddress address={address} type="address" />
+				</TabsContent>
+
+				<TabsContent value={TABS_TRANSACTIONS_VALUES.OBJECT}>
+					<TransactionBlocksForAddress noBorderBottom address={address} isObject noHeader />
+				</TabsContent>
+			</ErrorBoundary>
+		</Tabs>
+	);
+}
+
 function ObjectAddressContent({ address, error }: { address: string; error?: Error | null }) {
 	if (error) {
 		return (
@@ -129,29 +163,10 @@ function ObjectAddressContent({ address, error }: { address: string; error?: Err
 				<FieldsContent objectId={address} />
 			</section>
 
-			<section className="mt-14 flex flex-col md:flex-row">
-				<div className="basis-1/2 pr-0 md:pr-5">
-					<div className="border-b border-gray-45 pb-5">
-						<Heading color="gray-90" variant="heading4/semibold">
-							Address Transaction Blocks
-						</Heading>
-					</div>
-
-					<div className="pt-5">
-						<TransactionsForAddress address={address} type="address" />
-					</div>
-				</div>
-
-				<Divider vertical />
-
-				<div className="mt-14 basis-1/2 pl-0 md:mt-0 md:pl-5">
-					<TransactionBlocksForAddress
-						noBorderBottom
-						address={address}
-						isObject
-						tableHeader="Object Transaction Blocks"
-					/>
-				</div>
+			<section className="mt-14">
+				<TabHeader title="Transaction Blocks">
+					<TransactionsSection address={address} />
+				</TabHeader>
 			</section>
 		</div>
 	);
