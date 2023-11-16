@@ -145,7 +145,6 @@ mod tests {
             ("Checkpoint", "addressMetrics"),
             ("Epoch", "protocolConfig"),
             ("Object", "dynamicField"),
-            ("Query", "coinMetadata"),
             ("Query", "moveCallMetrics"),
             ("Query", "networkMetrics"),
             ("Subscription", "events"),
