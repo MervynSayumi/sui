@@ -529,9 +529,6 @@ importers:
       '@amplitude/analytics-browser':
         specifier: ^1.10.3
         version: 1.10.3
-      '@coinbase/cbpay-js':
-        specifier: ^1.7.0
-        version: 1.7.0
       '@floating-ui/react':
         specifier: ^0.23.0
         version: 0.23.0(react-dom@18.2.0)(react@18.2.0)
@@ -3858,16 +3855,6 @@ packages:
       human-id: 1.0.2
       prettier: 2.8.8
     dev: true
-
-  /@coinbase/cbpay-js@1.7.0:
-    resolution: {integrity: sha512-Y29a18PiJA/JQOsDVRyMipbSArqM5elxy5TRFB+kyfvuMfFa67oesFw1tIgQuaobBF353AO3gFzRLLEEKjP2OA==}
-    engines: {node: '>= 14'}
-    peerDependencies:
-      regenerator-runtime: ^0.13.9
-    peerDependenciesMeta:
-      regenerator-runtime:
-        optional: true
-    dev: false
 
   /@colors/colors@1.5.0:
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}

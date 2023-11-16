@@ -303,6 +303,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 	);
 
 	const { apiEnv } = useAppSelector((state) => state.app);
+	const isMainnet = apiEnv === API_ENV.mainnet;
 	const { request } = useAppsBackend();
 	const { data } = useQuery({
 		queryKey: ['apps-backend', 'monitor-network'],
@@ -313,7 +314,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 		// Keep cached for 2 minutes:
 		staleTime: 2 * 60 * 1000,
 		retry: false,
-		enabled: apiEnv === API_ENV.mainnet,
+		enabled: isMainnet,
 	});
 
 	const {
@@ -374,7 +375,7 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 	}
 	return (
 		<>
-			{apiEnv === API_ENV.mainnet && data?.degraded && (
+			{isMainnet && data?.degraded && (
 				<div className="rounded-2xl bg-warning-light border border-solid border-warning-dark/20 text-warning-dark flex items-center py-2 px-3 mb-4">
 					<Info12 className="shrink-0" />
 					<div className="ml-2">
@@ -411,17 +412,18 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 										<CoinBalance amount={tokenBalance} type={activeCoinType} />
 									</div>
 
-									{!accountHasSui && (
+									{!accountHasSui ? (
 										<div className="flex flex-col gap-5">
 											<div className="flex flex-col flex-nowrap justify-center items-center text-center px-2.5">
 												<Text variant="pBodySmall" color="gray-80" weight="normal">
-													Buy SUI to get started
+													{isMainnet
+														? 'Buy SUI to get started'
+														: 'To send transactions on the Sui network, you need SUI in your wallet.'}
 												</Text>
 											</div>
 											<FaucetRequestButton />
 										</div>
-									)}
-
+									) : null}
 									{isError ? (
 										<Alert>
 											<div>
@@ -429,19 +431,25 @@ function TokenDetails({ coinType }: TokenDetailsProps) {
 											</div>
 										</Alert>
 									) : null}
+									{accountHasSui}
 									<div className="grid grid-cols-3 gap-3 w-full">
-										<LargeButton
-											spacing="sm"
-											className={
-												!accountHasSui ? 'col-span-3 !bg-sui-primaryBlue2023 !text-white' : ''
-											}
-											primary={!accountHasSui}
-											center
-											to="/onramp"
-											disabled={(coinType && coinType !== SUI_TYPE_ARG) || !providers?.length}
-										>
-											Buy
-										</LargeButton>
+										{isMainnet ? (
+											<LargeButton
+												spacing="sm"
+												className={
+													!accountHasSui && isMainnet
+														? 'col-span-3 !bg-sui-primaryBlue2023 !text-white'
+														: ''
+												}
+												primary={!accountHasSui}
+												center
+												to="/onramp"
+												disabled={(coinType && coinType !== SUI_TYPE_ARG) || !providers?.length}
+											>
+												Buy
+											</LargeButton>
+										) : null}
+
 										<LargeButton
 											center
 											data-testid="send-coin-button"

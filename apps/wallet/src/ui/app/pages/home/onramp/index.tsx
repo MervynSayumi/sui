@@ -7,7 +7,6 @@ import Overlay from '_src/ui/app/components/overlay';
 import { SectionHeader } from '_src/ui/app/components/SectionHeader';
 import { useActiveAddress } from '_src/ui/app/hooks';
 import { useUnlockedGuard } from '_src/ui/app/hooks/useUnlockedGuard';
-// import { Badge } from '_src/ui/app/shared/Badge';
 import { Heading } from '_src/ui/app/shared/heading';
 import { Text } from '_src/ui/app/shared/text';
 import { useMutation } from '@tanstack/react-query';
@@ -67,9 +66,6 @@ export function Onramp() {
 				>
 					<span className="flex w-full">
 						<preferredProvider.icon className="mr-auto w-10 h-10" />
-						{/* {preferredProvider.key === 'coinbase' && (
-							<Badge variant="success" label="Most Popular" />
-						)} */}
 					</span>
 
 					<Heading variant="heading6" weight="semibold" color="hero-dark">
