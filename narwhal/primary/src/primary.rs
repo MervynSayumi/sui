@@ -64,7 +64,9 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
     num::NonZeroU32,
 };
-use storage::{CertificateStore, HeaderStore, PayloadStore, ProposerStore, VoteDigestStore};
+use storage::{
+    CertificateStore, ConsensusStore, HeaderStore, PayloadStore, ProposerStore, VoteDigestStore,
+};
 use sui_protocol_config::ProtocolConfig;
 use tokio::{sync::oneshot, time::Instant};
 use tokio::{sync::watch, task::JoinHandle};
@@ -542,7 +544,7 @@ impl Primary {
 
     // Spawns the primary and returns the JoinHandles of its tasks, as well as a metered receiver for the Consensus.
     #[allow(clippy::too_many_arguments)]
-    pub fn spawn_mysticeti(
+    pub fn spawn_narwhalceti(
         authority: Authority,
         signer: KeyPair,
         network_signer: NetworkKeyPair,
@@ -554,6 +556,7 @@ impl Primary {
         client: NetworkClient,
         header_store: HeaderStore,
         payload_store: PayloadStore,
+        consensus_store: ConsensusStore,
         tx_sequence: Sender<CommittedSubDag>,
         tx_shutdown: &mut PreSubscribedBroadcastSender,
         registry: &Registry,
@@ -890,6 +893,8 @@ impl Primary {
             committee.clone(),
             leader_schedule,
             header_store,
+            consensus_store,
+            node_metrics.clone(),
         ));
 
         let core = Core::new(
@@ -1674,16 +1679,22 @@ impl WorkerToPrimary for WorkerReceiverHandler {
     ) -> Result<anemo::Response<()>, anemo::rpc::Status> {
         let message = request.into_body();
 
+        let (tx_ack, rx_ack) = oneshot::channel();
         let response = self
             .tx_our_digests
             .send(OurDigestMessage {
                 digest: message.digest,
                 worker_id: message.worker_id,
                 timestamp: *message.metadata.created_at(),
-                ack_channel: None,
+                ack_channel: Some(tx_ack),
             })
             .await
             .map(|_| anemo::Response::new(()))
+            .map_err(|e| anemo::rpc::Status::internal(e.to_string()))?;
+
+        // If we are ok, then wait for the ack
+        rx_ack
+            .await
             .map_err(|e| anemo::rpc::Status::internal(e.to_string()))?;
 
         Ok(response)

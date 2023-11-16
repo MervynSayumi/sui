@@ -26,7 +26,7 @@ impl Broadcaster {
         committee: Committee,
         client: NetworkClient,
     ) -> Self {
-        const BROADCAST_BACKLOG_CAPACITY: usize = 100;
+        const BROADCAST_BACKLOG_CAPACITY: usize = 2000;
 
         let (tx_own_header_broadcast, _rx_own_header_broadcast) =
             broadcast::channel(BROADCAST_BACKLOG_CAPACITY);
@@ -81,16 +81,14 @@ impl Broadcaster {
         mut rx_own_header_broadcast: broadcast::Receiver<SignedHeader>,
     ) {
         let network = inner.client.get_primary_network().await.unwrap();
-        const PUSH_TIMEOUT: Duration = Duration::from_secs(10);
+        const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
         let peer_id = anemo::PeerId(peer_name.0.to_bytes());
         let peer = network.waiting_peer(peer_id);
         let client = PrimaryToPrimaryClient::new(peer);
         // This will contain at most headers created within the last PUSH_TIMEOUT.
         let mut requests = FuturesUnordered::new();
-        // Back off and retry only happen when there is only one header to be broadcasted.
-        // Otherwise no retry happens.
         const BACKOFF_INTERVAL: Duration = Duration::from_millis(100);
-        const MAX_BACKOFF_MULTIPLIER: u32 = 100;
+        const MAX_BACKOFF_MULTIPLIER: u32 = 50;
         let mut backoff_multiplier: u32 = 0;
 
         async fn send_header(
@@ -109,7 +107,7 @@ impl Broadcaster {
 
         loop {
             tokio::select! {
-                result = rx_own_header_broadcast.recv() => {
+                result = rx_own_header_broadcast.recv(), if requests.len() < 100 => {
                     let header = match result {
                         Ok(header) => header,
                         Err(broadcast::error::RecvError::Closed) => {
@@ -131,14 +129,12 @@ impl Broadcaster {
                             0
                         },
                         Err(_) => {
-                            if retries < 10 {
-                                // Retry broadcasting the latest header, to help the network stay alive.
-                                let request = Request::new(SendHeaderRequest { signed_header: header.clone() }).with_timeout(PUSH_TIMEOUT);
-                                requests.push(send_header(client.clone(), request, header, retries));
-                                std::cmp::min(backoff_multiplier * 2 + 1, MAX_BACKOFF_MULTIPLIER)
-                            } else {
-                                0
-                            }
+                            // Retry broadcasting until the header is received.
+                            // If a remote host was down for awhile, after restarting it will
+                            // first receive the retried old headers, then the latest headers.
+                            let request = Request::new(SendHeaderRequest { signed_header: header.clone() }).with_timeout(PUSH_TIMEOUT);
+                            requests.push(send_header(client.clone(), request, header, retries));
+                            std::cmp::min(backoff_multiplier * 3 / 2 + 1, MAX_BACKOFF_MULTIPLIER)
                         },
                     };
                     if backoff_multiplier > 0 {

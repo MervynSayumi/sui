@@ -86,7 +86,7 @@ impl PrimaryNodeInner {
 
         // spawn primary if not already running
         let handles = if protocol_config.narwhalceti() {
-            Self::spawn_mysticeti_primary(
+            Self::spawn_narwhalceti_primary(
                 committee.authority_by_key(keypair.public()).unwrap().id(),
                 keypair,
                 network_keypair,
@@ -301,7 +301,7 @@ impl PrimaryNodeInner {
     }
 
     /// Spawn a Mysticeti primary.
-    pub async fn spawn_mysticeti_primary<State>(
+    pub async fn spawn_narwhalceti_primary<State>(
         authority_id: AuthorityIdentifier,
         // The private-public key pair of this authority.
         keypair: KeyPair,
@@ -380,7 +380,7 @@ impl PrimaryNodeInner {
         // components. Consider using a holder struct to pass them around.
 
         // Spawn the primary.
-        handles.extend(Primary::spawn_mysticeti(
+        handles.extend(Primary::spawn_narwhalceti(
             authority.clone(),
             keypair,
             network_keypair,
@@ -392,6 +392,7 @@ impl PrimaryNodeInner {
             client,
             store.header_store.clone(),
             store.payload_store.clone(),
+            store.consensus_store.as_ref().clone(),
             tx_sequence,
             tx_shutdown,
             registry,

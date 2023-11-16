@@ -210,6 +210,7 @@ async fn test_internal_consensus_output() {
             expected_transaction, output_transaction,
             "Expected to have received transaction with same id. Ordering is important"
         );
+        println!("Received transaction: {}", output_transaction);
 
         if transactions.is_empty() {
             break;

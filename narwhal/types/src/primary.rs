@@ -2223,24 +2223,12 @@ impl Hash<{ crypto::DIGEST_LENGTH }> for CertificateV2 {
 impl fmt::Debug for Certificate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            Certificate::V1(data) => write!(
-                f,
-                "{}: C{}({}, {}, E{})",
-                data.digest(),
-                data.round(),
-                data.origin(),
-                data.header.digest(),
-                data.epoch()
-            ),
-            Certificate::V2(data) => write!(
-                f,
-                "{}: C{}({}, {}, E{})",
-                data.digest(),
-                data.round(),
-                data.origin(),
-                data.header.digest(),
-                data.epoch()
-            ),
+            Certificate::V1(data) => {
+                write!(f, "C{}({}, {})", data.round(), data.origin(), data.digest(),)
+            }
+            Certificate::V2(data) => {
+                write!(f, "C{}({}, {})", data.round(), data.origin(), data.digest(),)
+            }
         }
     }
 }

@@ -1,21 +1,24 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
+    fmt,
     ops::Bound::{Excluded, Included, Unbounded},
     sync::Arc,
     time::Duration,
 };
 
 use config::{AuthorityIdentifier, Committee, Stake};
+use mysten_metrics::monitored_scope;
 use parking_lot::Mutex;
-use storage::HeaderStore;
+use storage::{ConsensusStore, HeaderStore};
+use store::rocks::DBBatch;
 use tokio::time::Instant;
-use tracing::warn;
+use tracing::{warn, error};
 use types::{
     error::DagResult, Certificate, CertificateV2, CommittedSubDag, HeaderAPI, HeaderKey,
     ReputationScores, Round, SignedHeader, TimestampMs,
 };
 
-use crate::consensus::LeaderSchedule;
+use crate::{consensus::LeaderSchedule, metrics::PrimaryMetrics};
 
 /// Keeps track of suspended certificates and their missing parents.
 /// The digest keys in `suspended` and `missing` can overlap, but a digest can exist in one map
@@ -41,6 +44,8 @@ impl DagState {
         committee: Committee,
         leader_schedule: LeaderSchedule,
         header_store: HeaderStore,
+        consensus_store: ConsensusStore,
+        metrics: Arc<PrimaryMetrics>,
     ) -> Self {
         let mut accepted_by_author = vec![];
         accepted_by_author.resize_with(committee.size(), BTreeSet::default);
@@ -56,12 +61,14 @@ impl DagState {
             suspended: Default::default(),
             suspended_count,
             persisted,
-            committed,
             highest_proposed_round: 0,
             pending_leaders: VecDeque::default(),
             leader_schedule,
             recent_committed_sub_dag: VecDeque::default(),
+            committed,
             header_store,
+            consensus_store,
+            metrics,
         };
         inner.recover();
         Self {
@@ -97,6 +104,7 @@ impl DagState {
     }
 
     pub(crate) fn try_commit(&self) -> Vec<CommittedSubDag> {
+        let _scope = monitored_scope("DagState::try_commit");
         let mut inner = self.inner.lock();
         let mut committed_sub_dags = Vec::new();
         loop {
@@ -107,6 +115,16 @@ impl DagState {
             }
         }
         committed_sub_dags
+    }
+
+    pub(crate) fn flush(&self) {
+        let mut batch;
+        {
+            let mut inner = self.inner.lock();
+            batch = inner.header_store.batch();
+            inner.flush(&mut batch).unwrap();
+        }
+        batch.write().unwrap();
     }
 
     pub(crate) fn last_header_per_authority(&self) -> BTreeMap<AuthorityIdentifier, Round> {
@@ -159,8 +177,6 @@ struct Inner {
 
     // Watermark of persisted headers per author.
     persisted: Vec<Round>,
-    // Watermark of committed headers per author.
-    committed: Vec<Round>,
 
     // Highest round of proposed headers.
     highest_proposed_round: Round,
@@ -173,10 +189,17 @@ struct Inner {
     leader_schedule: LeaderSchedule,
     // TODO: make the format more efficient
     recent_committed_sub_dag: VecDeque<CommittedSubDag>,
+    // Watermark of committed headers per author.
+    committed: Vec<Round>,
 
     // Stores headers from all validators in the network.
     // Should only be used for occasional lookups.
     header_store: HeaderStore,
+
+    // Stores updates to consensus states.
+    consensus_store: ConsensusStore,
+
+    metrics: Arc<PrimaryMetrics>,
 }
 
 impl Inner {
@@ -216,7 +239,7 @@ impl Inner {
                 missing.push(*ancestor);
                 continue;
             }
-            if ancestor_accepted.first().unwrap().round() <= key.round() {
+            if ancestor_accepted.first().unwrap().round() < ancestor.round() {
                 missing.push(*ancestor);
                 continue;
             }
@@ -251,10 +274,19 @@ impl Inner {
                 suspended_header.signed_header = Some(signed_header);
             }
             suspended_header.missing_ancestors.extend(missing.iter());
+            self.metrics
+                .certificates_suspended
+                .with_label_values(&["missing"])
+                .inc();
             return Ok(false);
         }
 
         self.accept_internal(signed_header);
+
+        self.metrics
+            .certificates_currently_suspended
+            .set(self.suspended.len() as i64);
+
         Ok(true)
     }
 
@@ -267,7 +299,7 @@ impl Inner {
 
             let author_index = key.author().0 as usize;
             let author_accepted = &mut self.accepted_by_author[author_index];
-            // TODO(narwhalceti): gc and enforce size limit on author_accepted.
+            // GC is done in flush().
             author_accepted.insert(key);
 
             let header_by_round = self.accepted_by_round.entry(key.round()).or_default();
@@ -281,13 +313,16 @@ impl Inner {
                 }
             }
 
-            // TODO(narwhalceti): cleanup unnecessary headers.
-
-            // Try to accept children of the accepted header.
+            // Try to accept dependents of the accepted header.
             let Some(suspended_header) = self.suspended.remove(&key) else {
                 continue;
             };
-            assert!(suspended_header.missing_ancestors.is_empty());
+            if !suspended_header.missing_ancestors.is_empty() {
+                panic!(
+                    "Missing ancestors of suspended header {} should have been accepted: {:?}",
+                    key, suspended_header,
+                );
+            }
             for child in suspended_header.dependents {
                 let suspended_child = self
                     .suspended
@@ -312,7 +347,7 @@ impl Inner {
         let mut parent_round = None;
         let mut next_check_delay = Duration::from_millis(100);
         let max_wait_threshold = Duration::from_millis(200);
-        for r in (highest_proposed_round..=self.highest_known_round()).rev() {
+        'search: for r in (highest_proposed_round..=self.highest_known_round()).rev() {
             let headers_by_round = &self.accepted_by_round[&r];
             let Some(quorum_time) = headers_by_round.quorum_time else {
                 continue;
@@ -327,14 +362,14 @@ impl Inner {
                 let leader_wait_threshold = wait_interval * i as u32;
                 if quorum_elapsed >= leader_wait_threshold {
                     parent_round = Some(r);
-                    break;
+                    break 'search;
                 } else {
                     next_check_delay = next_check_delay.min(leader_wait_threshold - quorum_elapsed);
                 }
             }
             if quorum_elapsed >= max_wait_threshold {
                 parent_round = Some(r);
-                break;
+                break 'search;
             } else {
                 next_check_delay = next_check_delay.min(max_wait_threshold - quorum_elapsed);
             }
@@ -428,7 +463,11 @@ impl Inner {
                     selected_leaders.push(*key);
                 }
                 LeaderSelectionStatus::Undecided => break,
-            }
+            };
+            self.metrics
+                .leader_election_outcome
+                .with_label_values(&[&status.to_string()])
+                .inc();
             self.pending_leaders.pop_front();
         }
 
@@ -657,9 +696,10 @@ impl Inner {
             }
         }
         for header in &commit_headers {
-            let author = header.header().author().0 as usize;
+            let author = header.author().0 as usize;
             self.committed[author] = std::cmp::max(self.committed[author], header.round());
         }
+
         let certificates: Vec<_> = commit_headers
             .into_iter()
             .map(|h| {
@@ -723,6 +763,52 @@ impl Inner {
             .map(|(r, _)| *r)
             .unwrap()
     }
+
+    fn flush(&mut self, batch: &mut DBBatch) -> DagResult<()> {
+        for (i, accepted) in self.accepted_by_author.iter().enumerate() {
+            let author = AuthorityIdentifier(i as u16);
+            let persisted = self.persisted[i];
+            let headers = accepted
+                .range((
+                    Included(HeaderKey::new(persisted + 1, author, Default::default())),
+                    Unbounded,
+                ))
+                .map(|key| self.headers.get(key).unwrap());
+            self.header_store.write_all(headers, batch).unwrap();
+            self.persisted[i] = accepted.last().unwrap().round();
+        }
+        // Clear cached headers that are no longer needed.
+        for accepted in &mut self.accepted_by_author {
+            // Keep at least 100 headers per authority, or more if headers need to be kept for propose and commit.
+            while accepted.len() > 1000 {
+                let key = accepted.first().unwrap();
+                let index = key.author().0 as usize;
+                if key.round() >= self.persisted[index] || key.round() >= self.committed[index] {
+                    break;
+                }
+                self.headers.remove(key);
+                accepted.pop_first().unwrap();
+            }
+        }
+
+        self.consensus_store
+            .update(
+                self.committed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (AuthorityIdentifier(i as u16), *r)),
+                self.recent_committed_sub_dag.iter(),
+                batch,
+            )
+            .unwrap();
+        // Clear recent_committed_sub_dag.
+        if let Some(commit) = self.recent_committed_sub_dag.pop_back() {
+            self.recent_committed_sub_dag.clear();
+            self.recent_committed_sub_dag.push_back(commit);
+        }
+
+        Ok(())
+    }
 }
 
 // Suspended header with missing dependency and dependent info.
@@ -761,6 +847,18 @@ enum LeaderSelectionStatus {
     WeakReject,
 }
 
+impl fmt::Display for LeaderSelectionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LeaderSelectionStatus::Undecided => write!(f, "Undecided"),
+            LeaderSelectionStatus::StrongSupport(_) => write!(f, "StrongSupport"),
+            LeaderSelectionStatus::WeakSupport(_) => write!(f, "WeakSupport"),
+            LeaderSelectionStatus::StrongReject => write!(f, "StrongReject"),
+            LeaderSelectionStatus::WeakReject => write!(f, "WeakReject"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CertificationStatus {
     None,
@@ -774,6 +872,7 @@ mod test {
 
     use fastcrypto::serde_helpers::BytesRepresentation;
     use itertools::Itertools;
+    use prometheus::Registry;
     use storage::NodeStorage;
     use test_utils::{temp_dir, CommitteeFixture};
     use types::{Header, HeaderV3};
@@ -849,11 +948,14 @@ mod test {
             LeaderSwapTable::new_empty(&fixture.committee()),
         );
         let store = NodeStorage::reopen(temp_dir(), None);
+        let metrics = Arc::new(PrimaryMetrics::new(&Registry::new()));
         let dag_state = DagState::new(
             AuthorityIdentifier(0),
             fixture.committee(),
             leader_schedule,
             store.header_store,
+            store.consensus_store.as_ref().clone(),
+            metrics,
         );
         let mut round_headers = vec![dag_state.get_headers_at_round(0)];
         let mut round_keys = vec![round_headers[0].iter().map(|h| h.key()).collect_vec()];
@@ -976,11 +1078,14 @@ mod test {
             LeaderSwapTable::new_empty(&fixture.committee()),
         );
         let store = NodeStorage::reopen(temp_dir(), None);
+        let metrics = Arc::new(PrimaryMetrics::new(&Registry::new()));
         let dag_state = DagState::new(
             AuthorityIdentifier(0),
             fixture.committee(),
             leader_schedule,
             store.header_store,
+            store.consensus_store.as_ref().clone(),
+            metrics,
         );
         let mut all_headers = dag_state.get_headers_at_round(0);
         let mut round_keys = vec![all_headers.iter().map(|h| h.key()).collect_vec()];
@@ -1082,11 +1187,14 @@ mod test {
             LeaderSwapTable::new_empty(&fixture.committee()),
         );
         let store = NodeStorage::reopen(temp_dir(), None);
+        let metrics = Arc::new(PrimaryMetrics::new(&Registry::new()));
         let dag_state = DagState::new(
             AuthorityIdentifier(0),
             fixture.committee(),
             leader_schedule,
             store.header_store,
+            store.consensus_store.as_ref().clone(),
+            metrics,
         );
         let mut all_headers = dag_state.get_headers_at_round(0);
         let mut round_keys = vec![all_headers.iter().map(|h| h.key()).collect_vec()];

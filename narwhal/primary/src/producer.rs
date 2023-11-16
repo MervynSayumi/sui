@@ -130,10 +130,11 @@ impl Producer {
                 .make_header(header_round, ancestors, ancestor_max_ts_ms, batch_messages)
                 .await;
 
-            // TODO(narwhalceti): persisence.
+            // Accept own header int othe DAG, and persist the DAG before broadcasting.
             self.dag_state
                 .try_accept(vec![signed_header.clone()])
                 .unwrap();
+            self.dag_state.flush();
 
             self.broadcaster.broadcast_header(signed_header);
         }

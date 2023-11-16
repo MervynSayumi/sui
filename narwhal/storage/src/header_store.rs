@@ -5,7 +5,10 @@ use std::{cmp::Ordering, iter, sync::Arc};
 
 use config::AuthorityIdentifier;
 use mysten_common::sync::notify_read::NotifyRead;
-use store::{rocks::DBMap, Map};
+use store::{
+    rocks::{DBBatch, DBMap},
+    Map,
+};
 use sui_macros::fail_point;
 use types::{HeaderDigest, HeaderKey, Round, SignedHeader};
 
@@ -42,11 +45,7 @@ impl HeaderStore {
     }
 
     /// Inserts a header to the store
-    pub fn write(&self, header: SignedHeader) -> StoreResult<()> {
-        fail_point!("narwhal-store-before-write");
-
-        let mut batch = self.header_by_key.batch();
-
+    pub fn write(&self, header: &SignedHeader, batch: &mut DBBatch) -> StoreResult<()> {
         let key = header.key();
 
         // write the header by its key
@@ -58,54 +57,40 @@ impl HeaderStore {
             iter::once(((header.author(), header.round(), header.digest()), ())),
         )?;
 
-        // execute the batch (atomically) and return the result
-        let result = batch.write();
-
-        if result.is_ok() {
-            self.notify_subscribers.notify(&key, &header);
-        }
-
-        fail_point!("narwhal-store-after-write");
-        result
+        Ok(())
     }
 
     /// Inserts multiple headers in the storage. This is an atomic operation.
     /// In the end it notifies any subscribers that are waiting to hear for the
     /// value.
-    pub fn write_all(&self, headers: impl IntoIterator<Item = SignedHeader>) -> StoreResult<()> {
-        fail_point!("narwhal-store-before-write");
-
-        let mut batch = self.header_by_key.batch();
-
+    pub fn write_all<'a>(
+        &self,
+        headers: impl Iterator<Item = &'a SignedHeader>,
+        batch: &mut DBBatch,
+    ) -> StoreResult<()> {
         let headers: Vec<_> = headers
             .into_iter()
             .map(|header| (header.key(), header))
             .collect();
-        let indices = headers
+        let indices: Vec<_> = headers
             .iter()
             .map(|(k, _h)| {
                 let key = (k.author(), k.round(), k.digest());
                 (key, ())
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         // write the headers by their keys
-        batch.insert_batch(&self.header_by_key, headers.clone())?;
+        batch.insert_batch(&self.header_by_key, headers)?;
 
         // write the header keys by their authors
         batch.insert_batch(&self.header_key_by_author, indices)?;
 
-        // execute the batch (atomically) and return the result
-        let result = batch.write();
+        Ok(())
+    }
 
-        if result.is_ok() {
-            for (_key, header) in &headers {
-                self.notify_subscribers.notify(&header.key(), header);
-            }
-        }
-
-        fail_point!("narwhal-store-after-write");
-        result
+    pub fn batch(&self) -> DBBatch {
+        self.header_by_key.batch()
     }
 
     /// Retrieves a header from the store. If not found

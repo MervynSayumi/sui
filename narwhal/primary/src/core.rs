@@ -3,7 +3,7 @@ use std::sync::Arc;
 use config::{AuthorityIdentifier, Committee, WorkerCache};
 use mysten_metrics::{
     metered_channel::{Receiver, Sender},
-    spawn_logged_monitored_task,
+    monitored_scope, spawn_logged_monitored_task,
 };
 use sui_protocol_config::ProtocolConfig;
 use tokio::{sync::watch, task::JoinHandle};
@@ -71,6 +71,8 @@ impl Core {
 
     async fn run(&mut self) {
         loop {
+            let _scope = monitored_scope("CoreLoopIteration");
+
             let Some(header) = self.rx_verified_header.recv().await else {
                 info!("Core loop shutting down!");
                 return;
