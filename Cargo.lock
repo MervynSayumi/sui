@@ -6630,6 +6630,7 @@ name = "narwhal-node"
 version = "0.1.0"
 dependencies = [
  "anemo",
+ "anyhow",
  "arc-swap",
  "async-trait",
  "axum",

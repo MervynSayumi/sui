@@ -349,9 +349,11 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
         display::action("Configuring instances");
 
         // Select instances to configure.
+        display::action("Select instances to configure");
         let (clients, nodes, _) = self.select_instances(parameters)?;
 
         // Generate the genesis configuration file and the keystore allowing access to gas objects.
+        display::action("Generate the genesis configuration file and the keystore allowing access to gas objects.");
         let command = self.protocol_commands.genesis_command(nodes.iter());
         let repo_name = self.settings.repository_name();
         let context = CommandContext::new().with_execute_from_path(repo_name.into());
@@ -372,6 +374,8 @@ impl<P: ProtocolCommands<T> + ProtocolMetrics, T: BenchmarkType> Orchestrator<P,
             command.push(format!("(rm -rf {} || true)", path.display()));
         }
         if cleanup {
+            // todo: cleanup configs?
+            // f'rm -r .db-* ; rm .*.json'
             command.push("(rm -rf ~/*log* || true)".into());
         }
         let command = command.join(" ; ");

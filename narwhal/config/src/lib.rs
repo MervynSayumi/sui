@@ -189,6 +189,25 @@ pub struct Parameters {
 }
 
 impl Parameters {
+    pub const DEFAULT_FILENAME: &'static str = "parameters.json";
+
+    // pub const BENCHMARK_PORT_OFFSET: u16 = 1500;
+    pub fn new_for_benchmarks() -> Self {
+        /*
+
+            node_params = {
+            'prometheus_metrics': {
+                "socket_addr": "/ip4/0.0.0.0/tcp/0/http"
+            },
+        }
+
+             */
+        // TODO set a propoer metrics address
+        Self {
+            ..Default::default()
+        }
+    }
+
     fn default_header_num_of_batches_threshold() -> usize {
         32
     }
@@ -464,6 +483,8 @@ impl std::fmt::Display for WorkerCache {
 }
 
 impl WorkerCache {
+    pub const DEFAULT_FILENAME: &'static str = "workers.json";
+
     /// Returns the current epoch.
     pub fn epoch(&self) -> Epoch {
         self.epoch

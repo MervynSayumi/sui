@@ -8,6 +8,7 @@ use crate::{
     client::Instance,
 };
 
+pub mod narwhal;
 pub mod sui;
 
 /// The minimum interface that the protocol should implement to allow benchmarks from

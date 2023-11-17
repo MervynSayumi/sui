@@ -9,10 +9,14 @@
 )]
 
 use clap::{Parser, Subcommand};
-use config::{ChainIdentifier, Committee, Import, Parameters, WorkerCache, WorkerId};
+use config::{
+    ChainIdentifier, Committee, CommitteeBuilder, Epoch, Export, Import, Parameters, WorkerCache,
+    WorkerId, WorkerIndex, WorkerInfo,
+};
 use crypto::{KeyPair, NetworkKeyPair};
-use eyre::Context;
-use fastcrypto::traits::KeyPair as _;
+use eyre::{Context, Result};
+use fastcrypto::traits::{EncodeDecodeBase64, KeyPair as _};
+use futures::join;
 use mysten_metrics::RegistryService;
 use narwhal_node as node;
 use narwhal_node::primary_node::PrimaryNode;
@@ -23,14 +27,23 @@ use node::{
     metrics::{primary_metrics_registry, start_prometheus_server, worker_metrics_registry},
 };
 use prometheus::Registry;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 use storage::{CertificateStoreCacheMetrics, NodeStorage};
 use sui_keys::keypair_file::{
     read_authority_keypair_from_file, read_network_keypair_from_file,
     write_authority_keypair_to_file, write_keypair_to_file,
 };
 use sui_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
-use sui_types::crypto::{get_key_pair_from_rng, AuthorityKeyPair, SuiKeyPair};
+use sui_types::{
+    crypto::{
+        get_key_pair_from_rng, AuthorityKeyPair, AuthorityPublicKey, NetworkPublicKey, SuiKeyPair,
+    },
+    multiaddr::Multiaddr,
+};
 use telemetry_subscribers::TelemetryGuards;
 use tokio::sync::mpsc::channel;
 #[cfg(feature = "benchmark")]
@@ -53,6 +66,27 @@ struct App {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Generate a committee, workers and the parameters config files of all validators
+    /// from a list of initial peers. This is only suitable for benchmarks as it exposes all keys.
+    BenchmarkGenesis {
+        #[clap(
+            long,
+            value_name = "ADDR",
+            num_args(1..),
+            value_delimiter = ',',
+            help = "A list of ip addresses to generate a genesis suitable for benchmarks"
+        )]
+        ips: Vec<String>,
+        /// The working directory where the files will be generated.
+        #[clap(long, value_name = "FILE", default_value = "genesis")]
+        working_directory: PathBuf,
+        /// The number of workers per authority
+        #[clap(long, value_name = "NUM", default_value = "1")]
+        num_workers: usize,
+        /// The base port
+        #[clap(long, value_name = "PORT", default_value = "5000")]
+        base_port: usize,
+    },
     /// Save an encoded bls12381 keypair (Base64 encoded `privkey`) to file
     GenerateKeys {
         /// The file where to save the encoded authority key pair
@@ -109,6 +143,11 @@ enum NodeType {
         /// The worker Id
         id: WorkerId,
     },
+    /// Run a primary & worker
+    Authority {
+        /// The worker Id
+        worker_id: WorkerId,
+    },
 }
 
 #[tokio::main]
@@ -135,6 +174,12 @@ async fn main() -> Result<(), eyre::Report> {
     let _guard = setup_telemetry(tracing_level, network_tracing_level, None);
 
     match &app.command {
+        Commands::BenchmarkGenesis {
+            ips,
+            working_directory,
+            num_workers,
+            base_port,
+        } => benchmark_genesis(ips, working_directory, *num_workers, *base_port)?,
         Commands::GenerateKeys { filename } => {
             let keypair: AuthorityKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
             write_authority_keypair_to_file(&keypair, filename).unwrap();
@@ -186,20 +231,24 @@ async fn main() -> Result<(), eyre::Report> {
                 .unwrap()
                 .id();
 
-            let registry = match subcommand {
-                NodeType::Primary => primary_metrics_registry(authority_id),
-                NodeType::Worker { id } => worker_metrics_registry(*id, authority_id),
+            let (primary_registry, worker_registry) = match subcommand {
+                NodeType::Primary => (Some(primary_metrics_registry(authority_id)), None),
+                NodeType::Worker { id } => (None, Some(worker_metrics_registry(*id, authority_id))),
+                NodeType::Authority { worker_id } => (
+                    Some(primary_metrics_registry(authority_id)),
+                    Some(worker_metrics_registry(*worker_id, authority_id)),
+                ),
             };
 
             // In benchmarks, transactions are not deserializable => many errors at the debug level
             // Moreover, we need RFC 3339 timestamps to parse properly => we use a custom subscriber.
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "benchmark")] {
-                    setup_benchmark_telemetry(tracing_level, network_tracing_level)?;
-                } else {
-                    let _guard = setup_telemetry(tracing_level, network_tracing_level, Some(&registry));
-                }
-            }
+            // cfg_if::cfg_if! {
+            //     if #[cfg(feature = "benchmark")] {
+            //         setup_benchmark_telemetry(tracing_level, network_tracing_level)?;
+            //     } else {
+            //         let _guard = setup_telemetry(tracing_level, network_tracing_level, Some(&registry));
+            //     }
+            // }
             run(
                 subcommand,
                 workers,
@@ -209,11 +258,178 @@ async fn main() -> Result<(), eyre::Report> {
                 primary_keypair,
                 primary_network_keypair,
                 worker_keypair,
-                registry,
+                primary_registry,
+                worker_registry,
             )
             .await?
         }
     }
+
+    Ok(())
+}
+
+/// Generate all the genesis files required for benchmarks.
+fn benchmark_genesis(
+    ips: &Vec<String>,
+    working_directory: &PathBuf,
+    num_workers: usize,
+    base_port: usize,
+) -> Result<()> {
+    tracing::info!("Generating benchmark genesis files");
+    fs::create_dir_all(&working_directory).wrap_err(format!(
+        "Failed to create directory '{}'",
+        working_directory.display()
+    ))?;
+
+    tracing::info!("Generating primary keys...");
+    // Generate primary keys
+    let mut primary_names = Vec::new();
+    let primary_key_files = (0..ips.len())
+        .map(|i| {
+            let mut path = working_directory.clone();
+            path.push(format!("primary-{}-key.json", i));
+            path
+        })
+        .collect::<Vec<_>>();
+
+    for filename in primary_key_files {
+        let keypair: AuthorityKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        write_authority_keypair_to_file(&keypair, filename).unwrap();
+        let pk = keypair.public().to_string();
+        primary_names.push(pk);
+    }
+
+    tracing::info!("Generating primary network keys...");
+    // Generate primary network keys
+    let mut primary_network_names = Vec::new();
+    let primary_network_key_files = (0..ips.len())
+        .map(|i| {
+            let mut path = working_directory.clone();
+            path.push(format!("primary-{}-network-key.json", i));
+            path
+        })
+        .collect::<Vec<_>>();
+
+    for filename in primary_network_key_files {
+        let network_keypair: NetworkKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        let pk = network_keypair.public().to_string();
+        write_keypair_to_file(&SuiKeyPair::Ed25519(network_keypair), filename).unwrap();
+        primary_network_names.push(pk);
+    }
+
+    // todo: add the option for remote workers and multiple workers
+    let mut addresses = BTreeMap::new();
+    for (pk, (network_pk, ip)) in primary_names
+        .iter()
+        .zip(primary_network_names.iter().zip(ips.iter()))
+    {
+        addresses.insert(pk.clone(), (network_pk.clone(), ip.clone()));
+    }
+
+    tracing::info!("Generating committee config...");
+    // Generate committee config
+    let mut committee_path = working_directory.clone();
+    committee_path.push(Committee::DEFAULT_FILENAME);
+    let mut committee_builder = CommitteeBuilder::new(Epoch::default());
+    for (i, (pk, (network_pk, ip))) in addresses.iter().enumerate() {
+        let primary_address: Multiaddr = format!("/ip4/{}/udp/{}", ip, base_port + i)
+            .parse()
+            .unwrap();
+        let protocol_key = AuthorityPublicKey::decode_base64(pk.as_str().trim())?.clone();
+        let network_key = NetworkPublicKey::decode_base64(network_pk.as_str().trim())?.clone();
+        tracing::info!("Adding authority...");
+        committee_builder = committee_builder.add_authority(
+            protocol_key,
+            1, // todo: make stake configurable
+            primary_address,
+            network_key,
+            ip.to_string(),
+        );
+    }
+    let committee = committee_builder.build();
+    tracing::info!("Generated committee file: {}", committee_path.display());
+
+    committee
+        .export(&committee_path.as_path().as_os_str().to_str().unwrap())
+        .expect("Failed to export committee file");
+
+    // Generate workers keys
+    let mut worker_names = Vec::new();
+    // todo: add the option for remote workers and multiple workers
+    let worker_key_files = (0..num_workers * ips.len())
+        .map(|i| {
+            let mut path = working_directory.clone();
+            path.push(format!("worker-{i}-key.json"));
+            path
+        })
+        .collect::<Vec<_>>();
+
+    for filename in worker_key_files {
+        let network_keypair: NetworkKeyPair = get_key_pair_from_rng(&mut rand::rngs::OsRng).1;
+        let pk = network_keypair.public().to_string();
+        write_keypair_to_file(&SuiKeyPair::Ed25519(network_keypair), filename).unwrap();
+        worker_names.push(pk);
+    }
+
+    // Generate workers config
+    let mut workers_path = working_directory.clone();
+    workers_path.push(WorkerCache::DEFAULT_FILENAME);
+    let mut worker_cache = WorkerCache {
+        workers: BTreeMap::new(),
+        epoch: Epoch::default(),
+    };
+    // 2 ports used per authority so add 2 * num authorities to base port
+    let mut worker_base_port = base_port + (2 * primary_names.len());
+
+    for (i, (pk, ip)) in primary_names.iter().zip(ips.iter()).enumerate() {
+        let mut workers = BTreeMap::new();
+        for j in 0..num_workers {
+            let worker_network_key =
+                NetworkPublicKey::decode_base64(worker_names[i * num_workers + j].as_str().trim())?
+                    .clone();
+
+            tracing::info!("Adding worker...");
+            let worker_info = WorkerInfo {
+                name: worker_network_key,
+                transactions: Multiaddr::try_from(format!(
+                    "/ip4/{}/tcp/{}/http",
+                    ip.to_string(),
+                    worker_base_port
+                ))
+                .unwrap(),
+                worker_address: Multiaddr::try_from(format!(
+                    "/ip4/{}/udp/{}",
+                    ip.to_string(),
+                    worker_base_port + 1
+                ))
+                .unwrap(),
+            };
+            worker_base_port += 2;
+            workers.insert(j as WorkerId, worker_info);
+        }
+        tracing::info!("Adding authority of worker...");
+        let protocol_key = AuthorityPublicKey::decode_base64(pk.as_str().trim())?.clone();
+        worker_cache
+            .workers
+            .insert(protocol_key, WorkerIndex(workers));
+    }
+
+    worker_cache
+        .export(&workers_path.as_path().as_os_str().to_str().unwrap())
+        .expect("Failed to export workers file");
+
+    // Generate node parameters config
+    let mut parameters_path = working_directory.clone();
+    parameters_path.push(Parameters::DEFAULT_FILENAME);
+    Parameters::default()
+        .export(&parameters_path.as_path().as_os_str().to_str().unwrap())
+        .expect("Failed to export parameters file");
+    tracing::info!(
+        "Generated (public) parameters file: {}",
+        parameters_path.display()
+    );
+
+    // todo: add step for db cleanup?
 
     Ok(())
 }
@@ -270,12 +486,13 @@ async fn run(
     node_type: &NodeType,
     workers: &str,
     parameters: Option<&str>,
-    store: &Path,
+    store_path: &Path,
     committee: Committee,
     primary_keypair: KeyPair,
     primary_network_keypair: NetworkKeyPair,
     worker_keypair: NetworkKeyPair,
-    registry: Registry,
+    primary_registry: Option<Registry>,
+    worker_registry: Option<Registry>,
 ) -> Result<(), eyre::Report> {
     // Read the workers and node's keypair from file.
     let worker_cache =
@@ -294,7 +511,7 @@ async fn run(
     let certificate_store_cache_metrics =
         CertificateStoreCacheMetrics::new(&registry_service.default_registry());
 
-    let store = NodeStorage::reopen(store, Some(certificate_store_cache_metrics));
+    let store = NodeStorage::reopen(store_path, Some(certificate_store_cache_metrics.clone()));
 
     let client = NetworkClient::new_from_keypair(&primary_network_keypair);
 
@@ -345,6 +562,57 @@ async fn run(
 
             (None, Some(worker))
         }
+        NodeType::Authority { worker_id } => {
+            let primary = PrimaryNode::new(parameters.clone(), registry_service.clone());
+
+            primary
+                .start(
+                    primary_keypair.copy(),
+                    primary_network_keypair,
+                    committee.clone(),
+                    ChainIdentifier::unknown(),
+                    ProtocolConfig::get_for_version(ProtocolVersion::max(), Chain::Unknown),
+                    worker_cache.clone(),
+                    client.clone(),
+                    &store,
+                    SimpleExecutionState::new(_tx_transaction_confirmation),
+                )
+                .await?;
+
+            let worker = WorkerNode::new(
+                *worker_id,
+                ProtocolConfig::get_for_version(ProtocolVersion::max(), Chain::Unknown),
+                parameters.clone(),
+                registry_service.clone(),
+            );
+
+            let mut worker_store_path = PathBuf::new();
+            if let Some(parent) = store_path.parent() {
+                worker_store_path.push(parent);
+            }
+            if let Some(file_name) = store_path.file_name().and_then(|name| name.to_str()) {
+                worker_store_path.push(format!("{}-{}", file_name, worker_id));
+            } else {
+                worker_store_path.push(format!("worker-db-{}", worker_id));
+            }
+            let worker_store =
+                NodeStorage::reopen(worker_store_path, Some(certificate_store_cache_metrics));
+
+            worker
+                .start(
+                    primary_keypair.public().clone(),
+                    worker_keypair,
+                    committee,
+                    worker_cache,
+                    client,
+                    &worker_store,
+                    TrivialTransactionValidator,
+                    None,
+                )
+                .await?;
+
+            (Some(primary), Some(worker))
+        }
     };
 
     // spin up prometheus server exporter
@@ -353,12 +621,29 @@ async fn run(
         "Starting Prometheus HTTP metrics endpoint at {}",
         prom_address
     );
-    let _metrics_server_handle = start_prometheus_server(prom_address, &registry);
 
-    if let Some(primary) = primary {
-        primary.wait().await;
-    } else if let Some(worker) = worker {
-        worker.wait().await;
+    if let Some(registry) = worker_registry {
+        let _worker_metrics_server_handle =
+            start_prometheus_server(prom_address.clone(), &registry);
+    }
+
+    if let Some(registry) = primary_registry {
+        let _primary_metrics_server_handle = start_prometheus_server(prom_address, &registry);
+    }
+
+    match (primary, worker) {
+        (Some(primary), Some(worker)) => {
+            join!(primary.wait(), worker.wait());
+        }
+        (Some(primary), None) => {
+            primary.wait().await;
+        }
+        (None, Some(worker)) => {
+            worker.wait().await;
+        }
+        (None, None) => {
+            // Handle case where neither primary nor worker is available
+        }
     }
 
     // If this expression is reached, the program ends and all other tasks terminate.
