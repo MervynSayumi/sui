@@ -82,6 +82,8 @@ struct Context<'env> {
     local_scopes: Vec<BTreeMap<Symbol, u16>>,
     local_count: BTreeMap<Symbol, u16>,
     used_locals: BTreeSet<N::Var_>,
+    // TODO if lookup during macro expnasion regularly exceeds ~100 entries, swap `nominal_blocks`
+    // to a map keyed by symbol.
     nominal_blocks: Vec<(Symbol, u16, NominalBlockType)>,
     nominal_block_id: u16,
     used_labels: BTreeSet<N::Var_>,
