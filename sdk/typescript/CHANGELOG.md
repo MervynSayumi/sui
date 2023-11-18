@@ -1,5 +1,15 @@
 # @mysten/sui.js
 
+## 0.47.0
+
+### Minor Changes
+
+- 64d45ba27: Add support for zklogin sig inside multisig
+
+### Patch Changes
+
+- 9ac7e2f3d: Add additional type exports to zklogin package
+
 ## 0.46.1
 
 ### Patch Changes
