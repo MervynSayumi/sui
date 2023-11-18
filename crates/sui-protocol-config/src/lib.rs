@@ -95,6 +95,7 @@ const MAX_PROTOCOL_VERSION: u64 = 32;
 // Version 32: Add delete functions for VerifiedID and VerifiedIssuer.
 //             Add sui::token module to sui framework.
 //             Enable transfer to object in testnet.
+//             Enable Narwhal CertificateV2 on mainnet
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -1664,6 +1665,8 @@ impl ProtocolConfig {
                         cfg.transfer_receive_object_cost_base = Some(52);
                         cfg.feature_flags.receive_objects = true;
                     }
+                    // enable nw cert v2 on mainnet
+                    cfg.feature_flags.narwhal_certificate_v2 = true;
                 }
                 // Use this template when making changes:
                 //
